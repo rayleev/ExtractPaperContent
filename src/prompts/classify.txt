@@ -1,0 +1,115 @@
+你是一个农业科研文献分类专家。请根据以下分类标准对论文进行分类。
+
+## 分类标准（5类）
+
+### Category 1: varietal_yield（品种型产量）
+**核心特征**: 研究的核心关注点是基因型(G)的表现差异。
+**判断信号**:
+- 论文同时涉及 ≥2 个品种/品系/组合/杂交种 的产量比较
+- 存在明确的品种名称（如"川优6203"、"郑单958"、"两优培九"等）
+- 包含品种区试、品比试验、品系鉴定等关键词
+- 数据表中以品种为行，产量等性状为列
+**典型场景**:
+- 国家/省级品种区域试验
+- 新品种选育与比较试验
+- 育种家田间品系鉴定
+- 杂交组合筛选试验
+**关键词信号**（中英文）: 品种比较/variety comparison, 区域试验/regional trial, 品系比较/line comparison,
+产量性状/yield traits, 品种筛选/variety screening, 新品种/new variety, 对照品种/check variety/CK
+
+### Category 2: management_yield（管理/环境型产量）
+**核心特征**: 研究的核心关注点是栽培措施(M)或环境(E)对产量的影响。
+**判断信号**:
+- 通常只使用 1-2 个固定品种
+- 试验处理是施肥量、灌溉方式、播期、密度、耕作方式等管理因素
+- 产量是作为管理措施效果的评价指标之一
+**典型场景**:
+- 不同施氮量/施肥方案对产量的影响
+- 灌溉方式（滴灌/淹灌/节水灌溉）对比
+- 不同播期/密度试验
+- 保护性耕作 vs 常规耕作
+- 缓控释肥、有机肥等肥料效果试验
+**关键词信号**: 施肥/fertilization, 灌溉/irrigation, 播期/sowing date, 栽培措施/cultural practice,
+耕作/tillage, 密度/density, 水肥/water-fertilizer, 氮素/nitrogen
+
+### Category 3: remote_sensing_yield（遥感/区域宏观产量）
+**核心特征**: 核心关注宏观空间尺度(S)的产量估算或分析。
+**判断信号**:
+- 使用卫星遥感数据（Sentinel、MODIS、Landsat等）
+- 以行政区划（省/市/县）或地理网格为统计单位
+- 完全没有具体品种信息
+- 使用统计年鉴、面板数据等宏观数据源
+**典型场景**:
+- 遥感反演作物产量
+- 区域粮食产能评估
+- 气候变化对区域产量的宏观影响分析（使用统计数据而非田间试验）
+**关键词信号**: 遥感/remote sensing, MODIS, Sentinel, NDVI, 县域/county-level,
+粮食产能/food production capacity, 面板数据/panel data, 统计数据/statistical data
+
+### Category 4: mechanistic_yield（机制型产量）
+**核心特征**: 核心关注分子/生理机制，产量数据来自受控环境下的单株或小规模试验。
+**判断信号**:
+- 温室(greenhouse)或人工气候室(growth chamber)环境
+- 盆栽(pot)或营养钵试验
+- 基因敲除/过表达株系 vs 野生型
+- 产量指标为单株水平（单株产量、结实率、千粒重等），无法换算为亩/公顷
+**典型场景**:
+- 基因功能验证试验
+- 分子机制研究中的表型分析
+- 生理生化指标测定
+**关键词信号**: 温室/greenhouse, 盆栽/pot experiment, 基因敲除/knockout, 过表达/overexpression,
+野生型/wild type, T-DNA, CRISPR, 营养钵
+
+### Category 5: irrelevant（无关）
+**判断信号**:
+- 论文虽然提到"rice"或"水稻"，但并非研究水稻产量
+- 研究的是水稻的其他方面（如酶、蛋白质、化学成分、药用价值等）
+- 或完全与水稻产量无关的论文
+- 论文研究的是其他作物且不涉及水稻
+- 若论文包含任何产量数据（无论是否为主要研究目标），且研究对象为水稻，则不得归类为 irrelevant。仅当完全缺失产量指标时，才考虑 irrelevant。
+
+## 分类决策优先级
+1. 先排除 "irrelevant"：论文是否与作物产量研究直接相关？
+2. 再排除 "remote_sensing_yield"：是否使用遥感/宏观统计数据？
+3. 再排除 "mechanistic_yield"：是否是温室/盆栽/分子机制研究？
+4. 最后区分 "varietal_yield" vs "management_yield"：核心变量是品种还是管理措施？
+
+**边界情况处理**:
+- 如果论文同时包含品种比较和管理措施试验（如品种×施肥互作），当品种比较是主要目的时归为 varietal_yield，否则归为 management_yield
+- 如果论文的产量数据来自田间试验但只有1个品种，归为 management_yield
+- 综述/Review类论文如果没有原始产量数据，归为 irrelevant
+- 学位论文（dissertation/thesis）同样按研究内容分类，不因篇幅长而特殊对待
+
+## 待分类论文
+
+**标题**: {title}
+**摘要**: {abstract}
+**关键词**: {keywords}
+**期刊/来源**: {journal}
+**语言**: {language}
+
+## 试验地点筛选（重要）
+
+本项目**仅关注试验地点在中国境内**的研究。请根据摘要、关键词、期刊来源等信息判断试验地点：
+- 中文论文、CNKI来源、提到中国省市地名（如黑龙江、吉林、辽宁、河南、湖南、四川等）→ China
+- 英文论文且摘要中提到 China / Chinese / 中国具体省份或城市 → China
+- 英文论文且试验地点明确在其他国家（如 India, USA, Japan, Brazil 等）→ 对应国家名
+- 无法从元数据判断试验地点 → Unknown
+
+**如果 research_country 不是 China，该论文将直接跳过，不进行后续解析和提取。**
+
+## 输出格式
+
+严格输出JSON，不要包含任何其他文字：
+```json
+{{
+  "category": "varietal_yield | management_yield | remote_sensing_yield | mechanistic_yield | irrelevant",
+  "confidence": 0.0-1.0,
+  "reasoning": "简要说明判断依据（1-2句话）",
+  "key_signals": ["列出支持分类的关键信号"],
+  "crop_species": "水稻/Rice | 玉米/Maize | 小麦/Wheat | 大豆/Soybean | 多作物 | 不适用",
+  "paper_type": "期刊论文 | 学位论文 | 综述 | 会议论文 | 其他",
+  "has_yield_data": true/false,
+  "research_country": "China | 其他国家名 | Unknown"
+}}
+```

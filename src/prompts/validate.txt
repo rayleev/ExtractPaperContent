@@ -1,0 +1,43 @@
+你是一个数据质量审核专家。请对以下从论文中提取的结构化数据进行质量评估。
+
+## 原始论文信息
+**标题**: {title}
+**摘要**: {abstract}
+
+## 提取结果
+{extraction_json}
+
+## 评估要求
+
+对每个非null字段进行评估，判断其可信度：
+- **high**: 数据在论文中有明确记载，提取准确
+- **medium**: 数据在论文中可以找到，但提取可能有细微偏差（如四舍五入、单位换算差异）
+- **low**: 数据在论文中不够明确，提取是基于推断或部分信息
+
+同时检查以下逻辑一致性：
+1. 产量标准值(yield_standard_value)是否与原始值(yield_raw_value)和单位换算一致
+2. 增产率(pct_over_check)是否与对照品种产量计算一致
+3. 试验年份(trial_year)是否与发表年份(publication_year)合理（试验年份应早于或等于发表年份）
+4. 地理位置信息是否合理（如中国的经纬度范围）
+5. **多站点检测**: experimental_site_name 是否包含多个地名（用"、"或"和"连接的多个地点）。如果是，说明可能应该拆分为多个 study，在 issues 中标注"experimental_site_name 包含多个地点，可能需要拆分 study"
+
+## 输出JSON格式
+
+```json
+{{
+  "overall_confidence": "high | medium | low",
+  "overall_score": 0.0-1.0,
+  "field_confidences": {{
+    "field_name": "high | medium | low"
+  }},
+  "issues": [
+    "发现的问题描述"
+  ],
+  "logic_checks": {{
+    "yield_conversion_consistent": true/false,
+    "pct_over_check_consistent": true/false,
+    "year_consistent": true/false,
+    "location_reasonable": true/false
+  }}
+}}
+```

@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# 运行时缓存（每次运行自动生成）
+cache/
+
+# 输出结果（每次运行自动生成）
+output/
+
+# 配置文件（含 API Key，不入库）
+config.yaml
+
+# 论文 PDF 文件（体积大，不入库）
+docs/*.pdf
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 临时文件
+*.tmp
+*.bak

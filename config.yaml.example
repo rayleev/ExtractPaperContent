@@ -1,0 +1,60 @@
+# ============================================================
+#  paper_extractor 配置文件（示例）
+#  复制为 config.yaml 并填入实际值
+# ============================================================
+
+# 路径配置
+paths:
+  base_dir: "D:\\workspace\\local_project\\extract4paperQC"
+  papers_dir: "docs"                       # 论文数据目录（PDF/MD 直接放此目录下）
+  cache_dir: "cache"                       # 运行缓存（共享，支持断点续跑）
+  parsed_dir: "output/parsed"              # MinerU 解析后的 markdown（共享）
+  runs_dir: "output/runs"                  # 每次运行的输出目录: runs/{时间戳}/
+
+# MinerU PDF 解析服务
+mineru:
+  base_url: "http://YOUR_MINERU_HOST"
+  api_key: "YOUR_API_KEY"
+  lang_list: ["ch", "en"]
+  poll_interval: 5
+  poll_timeout: 600
+  return_md: true
+  return_content_list: false
+  return_middle_json: false
+  formula_enable: true
+  table_enable: true
+  parse_method: "ocr"    # auto / txt / ocr
+
+# LLM 服务
+llm:
+  base_url: "http://YOUR_LLM_HOST/v1"
+  api_key: "YOUR_API_KEY"
+  model: "DSv4-flash"
+  max_tokens: 8192
+  temperature: 0.1
+  max_retries: 3
+
+# 提取参数
+extraction:
+  max_text_chars: 80000
+  extractable_categories:
+    - "varietal_yield"
+    - "management_yield"
+  confidence_threshold: 0.5
+
+# 地理编码
+geocoding:
+  enabled: true
+  use_nominatim: true
+  nominatim_delay: 1.1
+
+# 并发控制
+concurrency:
+  classify_workers: 5
+  parse_workers: 5
+  extract_workers: 5
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "%(asctime)s [%(levelname)s] %(message)s"
