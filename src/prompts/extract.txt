@@ -14,7 +14,7 @@
    - 只提取 yield_raw_value（原始数值）和 yield_raw_unit（原始单位）
    - 不要填写 yield_standard_value 和 yield_standard_unit，这两个字段由程序自动换算
    - 例如论文写"亩产445.3kg"，则 yield_raw_value=445.3, yield_raw_unit="kg/亩"
-4. **不要填写经纬度和海拔**：latitude、longitude、altitude 由后处理程序根据地名计算，填null即可
+4. **经纬度和海拔**：仅当论文中**明确写出具体数值**时才提取（如"试验站位于北纬30.5°、东经114.3°、海拔25m"），否则填 null，程序会根据地名自动计算。不要填 geo_source，由程序自动标注。
 5. **缺失字段填 null**，不要猜测
 6. 一篇论文可能包含多个试验(study)，每个试验可能有多个品种(variety)
 
@@ -72,5 +72,6 @@
 - confidence_level 只能用 high / medium / low 三种值
 - trial_year 是字符串，可以是单一年份"2022"或年份区间"2022-2025"
 - **source_location** 必须标注数据来源于论文中的哪个具体位置（如 "表3"、"Table 5"、"2.3节"）
-- **不要填** latitude、longitude、altitude、yield_standard_value、yield_standard_unit，这些由程序后处理
+- latitude/longitude/altitude 仅在论文中明确写出时提取，否则填 null（程序会根据地名计算）
+- **不要填** geo_source、yield_standard_value、yield_standard_unit，这些由程序自动处理
 - 对于无法确认的字段，填null

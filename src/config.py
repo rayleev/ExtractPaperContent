@@ -55,6 +55,7 @@ class GeocodingConfig:
     enabled: bool = True
     use_nominatim: bool = True
     nominatim_delay: float = 1.1  # Nominatim rate limit (seconds)
+    baidu_api_key: str = ""       # 百度地图 API Key（空则跳过百度）
 
 
 @dataclass
@@ -175,6 +176,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         enabled=geo_raw.get("enabled", True),
         use_nominatim=geo_raw.get("use_nominatim", True),
         nominatim_delay=geo_raw.get("nominatim_delay", 1.1),
+        baidu_api_key=geo_raw.get("baidu_api_key", ""),
     )
 
     conc_raw = raw.get("concurrency", {})

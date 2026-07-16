@@ -85,9 +85,10 @@ class StudyInfo(BaseModel):
     country: Optional[str] = Field(None, description="[REQUIRED] 试验所在国家（ISO 3166 代码），如 CN")
     site_administrative_region: Optional[str] = Field(None, description="[REQUIRED] 试验点行政区划（省/市/县），如 '四川省广汉市'")
     experimental_site_name: Optional[str] = Field(None, description="试验站/试验地点名称")
-    latitude: Optional[float] = Field(None, description="[DO NOT FILL] 纬度，由后处理程序根据地名计算")
-    longitude: Optional[float] = Field(None, description="[DO NOT FILL] 经度，由后处理程序根据地名计算")
-    altitude: Optional[float] = Field(None, description="[DO NOT FILL] 海拔（米），由后处理程序根据地名计算")
+    latitude: Optional[float] = Field(None, description="[OPTIONAL] 纬度（仅当论文中明确写出时才填，否则留空由程序计算）")
+    longitude: Optional[float] = Field(None, description="[OPTIONAL] 经度（仅当论文中明确写出时才填，否则留空由程序计算）")
+    altitude: Optional[float] = Field(None, description="[OPTIONAL] 海拔/米（仅当论文中明确写出时才填，否则留空由程序计算）")
+    geo_source: Optional[str] = Field(None, description="[DO NOT FILL] 坐标来源，系统自动标注: paper/lookup/baidu/province_fallback")
     replication_number: Optional[int] = Field(None, description="田间试验重复次数")
     plot_size: Optional[str] = Field(None, description="小区面积，如 '13.3 m²'")
     planting_density: Optional[str] = Field(None, description="种植密度，如 '22.5万穴/公顷'")
@@ -177,6 +178,7 @@ class ExtractionResult(BaseModel):
                     "latitude": study.latitude or "",
                     "longitude": study.longitude or "",
                     "altitude": study.altitude or "",
+                    "geo_source": study.geo_source or "",
                     "replication_number": study.replication_number or "",
                     "plot_size": study.plot_size or "",
                     "planting_density": study.planting_density or "",

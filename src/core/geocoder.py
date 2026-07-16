@@ -174,11 +174,15 @@ class Geocoder:
         # 策略 1: 内置科研机构查找表
         result = self._lookup_table(region, site_name)
 
-        # 策略 2: Nominatim 在线查询
+        # 策略 2: 百度地图 API
+        if result is None:
+            result = self._baidu_geocode(region, site_name)
+
+        # 策略 3: Nominatim 在线查询
         if result is None:
             result = self._nominatim_geocode(region, site_name)
 
-        # 策略 3: 省会城市中心坐标兜底
+        # 策略 4: 省会城市中心坐标兜底
         if result is None:
             result = self._province_fallback(region)
 
@@ -217,7 +221,61 @@ class Geocoder:
             )
         return None
 
-    # ── 策略 2: Nominatim ────────────────────────────────
+    # ── 策略 2: 百度地图 ─────────────────────────────────
+
+    def _baidu_geocode(self, region: str, site_name: str) -> Optional[GeoResult]:
+        """使用百度地图地理编码 API。需要 API Key。"""
+        api_key = ""
+        if self.config:
+            geo_cfg = getattr(self.config, "geocoding", None)
+            if geo_cfg:
+                api_key = getattr(geo_cfg, "baidu_api_key", "")
+        if not api_key:
+            return None
+
+        try:
+            import httpx
+        except ImportError:
+            return None
+
+        address = region or site_name
+        if not address:
+            return None
+
+        try:
+            resp = httpx.get(
+                "https://api.map.baidu.com/geocoding/v3/",
+                params={
+                    "address": address,
+                    "output": "json",
+                    "ak": api_key,
+                },
+                timeout=8,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") == 0:
+                    result = data.get("result", {})
+                    location = result.get("location", {})
+                    lat = location.get("lat")
+                    lon = location.get("lng")
+                    if lat is not None and lon is not None:
+                        logger.info(
+                            f"    Baidu: {address} → ({lat:.4f}, {lon:.4f})"
+                        )
+                        return GeoResult(
+                            latitude=lat,
+                            longitude=lon,
+                            altitude=None,
+                            source="baidu",
+                            matched_name=address,
+                        )
+        except Exception as e:
+            logger.warning(f"    Baidu geocode error for '{address}': {e}")
+
+        return None
+
+    # ── 策略 3: Nominatim ────────────────────────────────
 
     def _nominatim_geocode(self, region: str, site_name: str) -> Optional[GeoResult]:
         """使用 OSM Nominatim 免费地理编码 API。"""
@@ -377,6 +435,8 @@ def geocode_extractions(extractions: List[dict], geocoder: Geocoder) -> List[dic
             lon = study.get("longitude")
 
             if lat is not None and lon is not None:
+                # LLM 从论文中提取了坐标
+                study["geo_source"] = "paper"
                 skipped += 1
                 continue
 
@@ -387,10 +447,12 @@ def geocode_extractions(extractions: List[dict], geocoder: Geocoder) -> List[dic
             if result:
                 study["latitude"] = result.latitude
                 study["longitude"] = result.longitude
+                study["geo_source"] = result.source
                 if result.altitude is not None and study.get("altitude") is None:
                     study["altitude"] = result.altitude
                 geocoded += 1
             else:
+                study["geo_source"] = "unknown"
                 failed += 1
                 logger.warning(
                     f"    Geocoding failed: region='{region}', site='{site}'"
