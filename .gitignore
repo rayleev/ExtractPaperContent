@@ -19,6 +19,7 @@ config.yaml
 
 # 论文 PDF 文件（体积大，不入库）
 docs/*.pdf
+/docs/
 
 # IDE
 .vscode/
