@@ -411,6 +411,20 @@ def _extract_altitude(nominatim_result: dict) -> Optional[float]:
 
 # ── Pipeline 集成函数 ────────────────────────────────────
 
+def _supplement_altitude_from_province(study: dict, region: str, site: str):
+    """
+    从省份查找表补充海拔。
+
+    当 geocoding 成功（如百度返回了经纬度）但海拔为空时，
+    尝试从 region 或 site 中匹配省份名称，用省会海拔作为近似值。
+    """
+    combined = f"{region or ''}{site or ''}"
+    for province, (_, _, alt) in PROVINCE_CENTROIDS.items():
+        if province in combined:
+            study["altitude"] = alt
+            return
+
+
 def geocode_extractions(extractions: List[dict], geocoder: Geocoder) -> List[dict]:
     """
     遍历提取结果，为每个 study 填充 latitude, longitude, altitude。
@@ -450,6 +464,9 @@ def geocode_extractions(extractions: List[dict], geocoder: Geocoder) -> List[dic
                 study["geo_source"] = result.source
                 if result.altitude is not None and study.get("altitude") is None:
                     study["altitude"] = result.altitude
+                # 补充海拔：如果 geocoding 成功但海拔为空，从省份查找表补充
+                if study.get("altitude") is None:
+                    _supplement_altitude_from_province(study, region, site)
                 geocoded += 1
             else:
                 study["geo_source"] = "unknown"

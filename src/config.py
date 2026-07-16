@@ -44,7 +44,7 @@ class LLMConfig:
 
 @dataclass
 class ExtractionConfig:
-    max_text_chars: int = 80000
+    max_text_chars: int = 120000
     extractable_categories: list = field(
         default_factory=lambda: ["varietal_yield", "management_yield"])
     confidence_threshold: float = 0.5
@@ -165,7 +165,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
 
     ext_raw = raw.get("extraction", {})
     extraction = ExtractionConfig(
-        max_text_chars=ext_raw.get("max_text_chars", 80000),
+        max_text_chars=ext_raw.get("max_text_chars", 120000),
         extractable_categories=ext_raw.get("extractable_categories",
                                            ["varietal_yield", "management_yield"]),
         confidence_threshold=ext_raw.get("confidence_threshold", 0.5),

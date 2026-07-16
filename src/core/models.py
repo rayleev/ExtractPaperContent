@@ -18,7 +18,7 @@ Paper → Study → VarietyYield
 from __future__ import annotations
 from enum import Enum
 from typing import Optional, List
-from pydantic import BaseModel, Field, model_validator, ConfigDict
+from pydantic import BaseModel, Field, model_validator, field_validator, ConfigDict
 import json
 import re
 
@@ -72,6 +72,21 @@ class VarietyYield(BaseModel):
     measurement_method: Optional[str] = Field(None, description="产量测定与计产方法，如 '小区单打单收单计产，晒干扬净后称重'")
     source_location: Optional[str] = Field(None, description="[REQUIRED] 数据来源位置：论文中的具体表格或段落，如 '表5'、'Table 3'、'2.3节'")
     confidence_level: Optional[ConfidenceLevel] = Field(None, description="[REQUIRED] 本条记录的整体提取置信度：<high|medium|low>")
+
+    @field_validator("pct_over_check", mode="before")
+    @classmethod
+    def _parse_pct_over_check(cls, v):
+        """处理 pct_over_check 的非标准格式，如 '8.48(13.88)' 或 '-12.5(-8.14)'。"""
+        if v is None:
+            return v
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            # 提取第一个数值（含负号），忽略括号内的第二个数值
+            m = re.match(r'^([+-]?\d+\.?\d*)', v.strip())
+            if m:
+                return float(m.group(1))
+        return None
 
 
 class StudyInfo(BaseModel):
@@ -214,20 +229,60 @@ class ExtractionResult(BaseModel):
 
 
 def _convert_yield(value: float, unit: str) -> Optional[float]:
-    """将产量值换算为 kg/ha。"""
-    unit_lower = unit.strip().lower()
-    if "亩" in unit_lower or unit_lower in ("kg/mu", "kg/亩"):
-        return round(value * 15, 2)  # 1 ha = 15 亩
-    elif unit_lower in ("t/ha", "ton/ha", "tonne/ha"):
-        return round(value * 1000, 2)
-    elif unit_lower in ("kg/ha",):
-        return round(value, 2)
-    elif "g" in unit_lower and "plot" in unit_lower:
-        return None  # g/plot 需要知道小区面积，无法直接换算
-    elif unit_lower in ("kg/plot",):
-        return None  # 需要知道小区面积
-    else:
-        return round(value, 2)  # 未知单位，原样保留
+    """
+    将产量值换算为 kg/ha。
+
+    策略：将单位拆解为"质量/面积"两部分，分别换算后计算结果。
+    支持的质量单位: kg, t(吨), g, 斤(=0.5kg)
+    支持的面积单位: ha, hm²(=ha), 亩(mu, =1/15 ha), m², 667m²(≈1亩)
+    无法可靠换算时返回 None（而非静默保留错误值）。
+    """
+    u = unit.strip().lower().replace(" ", "")
+
+    # ── 精确匹配常见完整单位 ──
+    exact_map = {
+        # kg/ha 系列（1 ha = 1 hm²）
+        "kg/ha": 1.0, "kg/hm²": 1.0, "kg/hm2": 1.0,
+        "kg·hm⁻²": 1.0, "kg·hm-2": 1.0,
+        # t/ha 系列
+        "t/ha": 1000.0, "t/hm²": 1000.0, "t/hm2": 1000.0,
+        "t·hm⁻²": 1000.0, "t·hm-2": 1000.0,
+        "ton/ha": 1000.0, "tonne/ha": 1000.0,
+        # g/ha 系列
+        "g/ha": 0.001, "g/hm²": 0.001,
+        # kg/亩 系列（1 ha = 15 亩 → 1 kg/亩 = 15 kg/ha）
+        "kg/亩": 15.0, "kg/mu": 15.0,
+        # 斤/亩（1 斤 = 0.5 kg → 0.5 × 15 = 7.5 kg/ha）
+        "斤/亩": 7.5,
+        # kg/667m²（≈ 1 亩 → 同 kg/亩）
+        "kg/667m²": 15.0, "kg/667m2": 15.0,
+    }
+
+    if u in exact_map:
+        return round(value * exact_map[u], 2)
+
+    # ── 模糊匹配：包含关键词 ──
+    # 亩/mu → × 15
+    if "亩" in u or "/mu" in u:
+        if "kg" in u or "公斤" in u:
+            return round(value * 15, 2)
+        if "斤" in u:
+            return round(value * 7.5, 2)
+        if u.startswith("t") or "吨" in u:
+            return round(value * 15000, 2)  # t/亩 → t/ha × 15
+
+    # hm² 或公顷 → 等同于 ha
+    if "hm" in u or "公顷" in u:
+        if "kg" in u or "公斤" in u:
+            return round(value, 2)
+        if u.startswith("t") or "吨" in u:
+            return round(value * 1000, 2)
+        if u.startswith("g"):
+            return round(value * 0.001, 2)
+
+    # 无法可靠换算的单位 — 返回 None 而非静默保留
+    # 常见的不可换算单位: g/株, g/plant, kg/plot, g/pot 等
+    return None
 
 
 def _build_example_with_descriptions(schema: dict) -> dict:

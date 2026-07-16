@@ -1,0 +1,99 @@
+你是一个专业的农业科研文献数据提取专家。请从以下试验章节中提取试验信息和品种产量数据。
+
+## 任务说明
+
+这是**第二阶段提取**，针对论文中某个具体试验章节的数据提取。请仔细分析该章节中的方法、结果和表格数据，提取所有品种产量信息。
+
+## 提取规则
+
+1. **只提取论文中明确存在的数据**，绝不编造或推测
+2. **注意同义表述**：论文中的表述可能与字段名不同但含义一致
+   - 如"小区面积"="plot_size"，"重复次数"="replication_number"
+   - "播种期"/"播种日期"="sowing_date"，"收获期"/"收获日期"="harvest_date"
+   - "试验地"/"试验地点"="experimental_site_name"
+   - "对照"/"CK"/"check"=is_check_variety=true
+   - "增产率"/"增幅"/"比CK增产"=pct_over_check
+   - "显著性标记"/"Duncan检验字母"/"多重比较字母"=significance_group
+3. **产量只提取原始值和单位，不要换算**
+   - 只提取 yield_raw_value（原始数值）和 yield_raw_unit（原始单位）
+   - 不要填写 yield_standard_value 和 yield_standard_unit，这两个字段由程序自动换算
+   - 例如论文写"亩产445.3kg"，则 yield_raw_value=445.3, yield_raw_unit="kg/亩"
+4. **经纬度和海拔**：仅当论文中**明确写出具体数值**时才提取（如"试验站位于北纬30.5°、东经114.3°、海拔25m"），否则填 null
+5. **缺失字段填 null**，不要猜测
+6. **每个品种一条记录**：从表格或文字中提取每个品种的产量数据
+
+## Study（试验）定义
+
+一个 study = **一个年份 × 一个试验站（试验点）**。
+- 不同年份 = 不同 study
+- 不同试验站 = 不同 study
+- 同一试验站内的多个地块/区组 = 同一个 study（产量取均值）
+
+## 论文元数据
+
+**paper_id**: {paper_id}
+**DOI**: {doi}
+**标题**: {title}
+**发表年份**: {year}
+
+## 试验背景（第一阶段识别）
+
+{study_context}
+
+## 试验章节内容
+
+{section_content}
+
+## 输出JSON格式
+
+严格输出以下JSON格式，不要包含任何其他文字：
+```json
+{{
+  "study_title": "[REQUIRED] 试验名称/标题",
+  "study_description": "试验简述（1-2句话概括）",
+  "trial_year": "[REQUIRED] 试验年份，如 '2022' 或 '2022-2025'",
+  "sowing_date": "播种日期（如 2022-04-15）",
+  "harvest_date": "收获日期（如 2022-10-08）",
+  "country": "[REQUIRED] 国家代码，如 CN",
+  "site_administrative_region": "[REQUIRED] 行政区划，如 '四川省广汉市'",
+  "experimental_site_name": "试验站/试验地点名称",
+  "latitude": "纬度（仅当论文明确写出时）",
+  "longitude": "经度（仅当论文明确写出时）",
+  "altitude": "海拔（仅当论文明确写出时）",
+  "replication_number": "重复次数（整数）",
+  "plot_size": "小区面积，如 '13.3 m²'",
+  "planting_density": "种植密度，如 '22.5万穴/公顷'",
+  "experimental_design_description": "[REQUIRED] 试验设计描述",
+  "experimental_design_type": "<RCBD|Split-plot|CRD|Unknown>",
+  "growth_facility_description": "试验环境，如 '大田环境'、'温室'",
+  "cultural_practices": "栽培管理措施描述",
+  "varieties": [
+    {{
+      "variety_name": "[REQUIRED] 品种名称",
+      "variety_code": "品种审定编号（如有）",
+      "is_check_variety": "[REQUIRED] 是否为对照品种 true/false",
+      "variety_source": "育种单位/来源",
+      "yield_raw_value": "[REQUIRED] 原始产量数值",
+      "yield_raw_unit": "[REQUIRED] 原始产量单位",
+      "yield_value_type": "<plot_mean|single_replicate|converted>",
+      "significance_group": "显著性字母标记",
+      "pct_over_check": "增产/减产百分比",
+      "measurement_method": "测定方法",
+      "source_location": "[REQUIRED] 数据来源位置，如 '表3'、'2.3节'",
+      "confidence_level": "<high|medium|low>"
+    }}
+  ]
+}}
+```
+
+**注意**：
+- varieties 数组包含该试验中**所有品种**的数据，不要遗漏
+- 从表格中逐行提取每个品种的数据
+- 对照品种（CK）也要包含在 varieties 中，is_check_variety 设为 true
+- 如果表格中没有产量数据，但有其他农艺性状数据，也尽量提取品种信息
+- yield_value_type: plot_mean=小区均值, single_replicate=单次重复, converted=从其他单位换算
+- confidence_level: high=数据明确, medium=可能有细微偏差, low=数据不够明确
+- source_location 必须标注数据来源（如 "表3"、"Table 5"、"3.2.3节"）
+- experimental_design_type 只能用 RCBD / Split-plot / CRD / Unknown
+- latitude/longitude/altitude 仅在论文明确写出时提取，否则填 null
+- 不要填 yield_standard_value、yield_standard_unit、geo_source

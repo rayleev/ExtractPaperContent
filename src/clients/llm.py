@@ -5,6 +5,7 @@ LLM API 客户端 — OpenAI 兼容接口，支持 JSON 响应解析和重试。
 import json
 import re
 import time
+import threading
 import logging
 from typing import Optional
 
@@ -16,7 +17,11 @@ logger = logging.getLogger("paper_extractor")
 
 
 class LLMClient:
-    """OpenAI 兼容的 LLM 客户端，带 JSON 提取能力。"""
+    """OpenAI 兼容的 LLM 客户端，带 JSON 提取能力和简单限流。"""
+
+    # 类级别限流：所有实例共享，确保跨线程请求间隔
+    _last_call_time: float = 0
+    _call_lock = threading.Lock()
 
     def __init__(self, config: LLMConfig):
         self.config = config
@@ -34,8 +39,18 @@ class LLMClient:
             return m.group(1).strip()
         return text
 
+    def _throttle(self):
+        """请求间隔至少 0.5 秒，避免瞬间并发冲击 LLM 服务。"""
+        with LLMClient._call_lock:
+            now = time.time()
+            elapsed = now - LLMClient._last_call_time
+            if elapsed < 0.5:
+                time.sleep(0.5 - elapsed)
+            LLMClient._last_call_time = time.time()
+
     def call(self, prompt: str, max_tokens: int | None = None) -> Optional[str]:
         """调用 LLM，返回原始文本响应。"""
+        self._throttle()
         url = f"{self.config.base_url}/chat/completions"
         payload = {
             "model": self.config.model,

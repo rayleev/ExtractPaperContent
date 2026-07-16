@@ -1,0 +1,70 @@
+你是一个专业的农业科研文献数据提取专家。请从以下论文中提取论文级元数据和试验概况。
+
+## 任务说明
+
+这是**第一阶段提取**，目标是：
+1. 提取论文级元数据（Paper级别字段）
+2. 识别论文中的所有试验（experiment sections），为后续第二阶段提取做准备
+
+## 提取规则
+
+1. **只提取论文中明确存在的数据**，绝不编造或推测
+2. **缺失字段填 null**，不要猜测
+3. **experiment_sections** 列出论文中的每个独立试验，每个试验 = 一个年份 x 一个试验站
+   - 不同年份 = 不同试验
+   - 不同试验站 = 不同试验
+   - 同一试验站内的多个地块/区组 = 同一个试验
+4. **section_title** 填写该试验在论文中对应的章节标题（原样摘录）
+5. crop_species 从论文标题、摘要或方法部分识别
+
+## 论文元数据
+
+**paper_id**: {paper_id}
+**DOI**: {doi}
+**标题**: {title}
+**发表年份**: {year}
+**期刊**: {journal}
+
+## 文档结构大纲
+
+{outline}
+
+## 摘要
+
+{abstract}
+
+## 试验设计与方法
+
+{methods}
+
+## 输出JSON格式
+
+严格输出以下JSON格式，不要包含任何其他文字：
+```json
+{{
+  "paper": {{
+    "paper_doi": "论文DOI（如有）",
+    "paper_title": "[REQUIRED] 论文完整标题",
+    "publication_year": "[REQUIRED] 发表年份，整数",
+    "journal_name": "期刊/来源名称（如有）",
+    "crop_species": "[REQUIRED] 作物物种，如 '水稻 / Rice'",
+    "data_file_link": "数据文件链接（可选）",
+    "data_file_description": "数据文件格式说明（可选）",
+    "data_file_version": "版本号（可选）"
+  }},
+  "experiment_sections": [
+    {{
+      "section_title": "该试验在论文中的章节标题",
+      "study_title": "试验名称/简要描述",
+      "trial_year": "试验年份，如 '2022' 或 '2022-2023'",
+      "site_description": "试验地点简要描述，如 '辽宁省沈阳市'"
+    }}
+  ]
+}}
+```
+
+**注意**：
+- experiment_sections 中每个元素代表一个独立的试验（一年 x 一站 = 一个试验）
+- 如果论文只有一个试验，只列一个元素
+- 如果论文有多个试验（不同年份或不同地点），每个列一个元素
+- section_title 应与文档大纲中的标题一致，便于后续定位

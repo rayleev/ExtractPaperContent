@@ -49,6 +49,40 @@ def step_parse(papers: List[dict], config: AppConfig, parsed_dir: Path | None = 
             continue
 
         pdf_path = paper.get("pdf_path")
+
+        # Fallback: look for existing MD files in parsed dir matching by title
+        # Build title→file index on first use, then match
+        if pdf_path and not hasattr(step_parse, '_md_title_index'):
+            parsed_dir = config.parsed_path
+            if parsed_dir.exists():
+                step_parse._md_title_index = {}
+                for md_file in parsed_dir.glob("*.md"):
+                    if "_chunks" in md_file.stem:
+                        continue
+                    try:
+                        with open(md_file, "r", encoding="utf-8") as f:
+                            head = f.read(2000)
+                        step_parse._md_title_index[md_file.name] = head
+                    except Exception:
+                        pass
+
+        if pdf_path and hasattr(step_parse, '_md_title_index'):
+            paper_title = paper.get("title", "")
+            if paper_title:
+                # Normalize whitespace for matching (MinerU may add spaces)
+                import re as _re
+                title_norm = _re.sub(r'\s+', '', paper_title)
+                for md_name, head_text in step_parse._md_title_index.items():
+                    head_norm = _re.sub(r'\s+', '', head_text)
+                    if len(title_norm) >= 5 and title_norm in head_norm:
+                        md_file = config.parsed_path / md_name
+                        logger.info(f"Reusing MD: {md_name} → {name}")
+                        with open(md_file, "r", encoding="utf-8") as f:
+                            parsed[pid] = f.read()
+                        break
+                if pid in parsed:
+                    continue
+
         if pdf_path and Path(pdf_path).exists():
             pdf_papers.append(paper)
         else:
