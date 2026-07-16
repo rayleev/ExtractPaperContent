@@ -136,11 +136,13 @@ class Geocoder:
         self._cache: dict = {}
         self._cache_file: Optional[Path] = None
         self._enabled = True
+        self._use_nominatim = True
 
         if config:
             geo_cfg = getattr(config, "geocoding", None)
             if geo_cfg:
                 self._enabled = getattr(geo_cfg, "enabled", True)
+                self._use_nominatim = getattr(geo_cfg, "use_nominatim", True)
             if self._enabled:
                 self._cache_file = config.cache_path / "geocoding_cache.json"
                 self._load_cache()
@@ -219,6 +221,9 @@ class Geocoder:
 
     def _nominatim_geocode(self, region: str, site_name: str) -> Optional[GeoResult]:
         """使用 OSM Nominatim 免费地理编码 API。"""
+        if not self._use_nominatim:
+            return None
+
         try:
             import httpx
         except ImportError:
@@ -238,7 +243,7 @@ class Geocoder:
                         "countrycodes": "cn",
                     },
                     headers={"User-Agent": "PaperExtractor/1.0 (research)"},
-                    timeout=15,
+                    timeout=8,
                 )
                 time.sleep(1.1)  # Nominatim: 1 req/s rate limit
 
