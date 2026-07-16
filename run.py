@@ -82,6 +82,12 @@ def main():
         default=None,
         help="Path to config.yaml (default: auto-detect)",
     )
+    parser.add_argument(
+        "--graph",
+        action="store_true",
+        default=False,
+        help="Use LangGraph pipeline (supports checkpoint, resume, concurrent processing)",
+    )
     args = parser.parse_args()
 
     # 加载配置 & 初始化 run_id
@@ -95,13 +101,20 @@ def main():
     config.log_path.mkdir(parents=True, exist_ok=True)
 
     logger = setup_logging(config)
-    logger.info(f"Pipeline starting -- step={args.step}")
+    logger.info(f"Pipeline starting -- step={args.step}, graph={args.graph}")
     logger.info(f"Run ID: {config.run_id}")
     logger.info(f"Run dir: {config._run_path}")
     logger.info(f"Base dir: {config.base_dir}")
 
     # 初始化客户端
     llm = LLMClient(config.llm)
+
+    # ── LangGraph Pipeline ──
+    if args.graph:
+        _run_graph_pipeline(config, llm, logger, args)
+        return
+
+    # ── Legacy Pipeline (below) ──
 
     # 发现论文
     papers = discover_papers(config)
@@ -196,6 +209,82 @@ def main():
             logger.info(f"Classification JSON: {cls_json}")
 
     logger.info("Pipeline complete!")
+
+
+def _run_graph_pipeline(config, llm, logger, args):
+    """运行 LangGraph pipeline。"""
+    from src.core.loader import discover_papers
+    from src.core.classifier import classify_papers, filter_papers
+    from src.core.geocoder import Geocoder
+    from src.clients.mineru import MinerUClient
+    from src.graph.batch import BatchOrchestrator
+    from src.output.statistics import generate_statistics
+
+    # 发现论文
+    papers = discover_papers(config)
+    if args.paper:
+        papers = [
+            p for p in papers
+            if args.paper.lower() in (p["doi"] + p["title"]).lower()
+        ]
+        logger.info(f"Filtered to {len(papers)} papers matching '{args.paper}'")
+
+    if not papers:
+        logger.error("No papers found!")
+        sys.exit(1)
+
+    logger.info(f"Found {len(papers)} papers for LangGraph pipeline")
+
+    # 分类（快速步骤，不走 graph）
+    logger.info("Step 1: Classifying papers...")
+    classifications = classify_papers(papers, config, llm)
+    filtered = filter_papers(classifications, config)
+    filtered_ids = {cls["paper_id"] for cls in filtered}
+
+    # 构建通过筛选的论文子集
+    from src.core.loader import get_paper_key
+    extractable_papers = [p for p in papers if get_paper_key(p) in filtered_ids]
+    logger.info(f"Extractable papers: {len(extractable_papers)} (filtered from {len(papers)})")
+
+    # 初始化 MinerU（仅当有 PDF 需要解析时）
+    mineru_client = None
+    has_pdf = any(
+        p.get("pdf_path") and not p.get("md_path")
+        for p in extractable_papers
+    )
+    if has_pdf:
+        mineru_client = MinerUClient(config.mineru)
+        logger.info("MinerU client initialized for PDF parsing")
+
+    # 初始化 Geocoder
+    geocoder = Geocoder(config) if config.geocoding.enabled else None
+
+    # 初始化 BatchOrchestrator
+    orchestrator = BatchOrchestrator(
+        config=config,
+        llm=llm,
+        geocoder=geocoder,
+        mineru_client=mineru_client,
+        max_concurrent=config.concurrency.extract_workers,
+    )
+
+    # 运行
+    logger.info("Step 2: Running LangGraph batch processing...")
+    stats = orchestrator.process_batch(
+        papers=extractable_papers,
+        classifications=classifications,
+    )
+
+    # 输出统计
+    logger.info(f"LangGraph pipeline complete!")
+    logger.info(f"  Completed: {stats['completed']}")
+    logger.info(f"  Failed: {stats['failed']}")
+    logger.info(f"  Skipped: {stats['skipped']}")
+
+    # 生成覆盖率统计（从输出的 CSV 读取）
+    csv_path = config.extraction_path / "full_flat.csv"
+    if csv_path.exists():
+        logger.info(f"Output CSV: {csv_path}")
 
 
 if __name__ == "__main__":

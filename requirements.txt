@@ -1,0 +1,18 @@
+# Core
+pydantic>=2.0
+pyyaml
+requests
+
+# PDF parsing (MinerU)
+# MinerU client uses raw HTTP, no SDK needed
+
+# LLM
+# OpenAI-compatible API via requests
+
+# LangGraph
+langgraph>=1.0
+langgraph-checkpoint-sqlite>=3.0
+langchain-core>=0.3
+
+# Geocoding
+# requests (already listed)

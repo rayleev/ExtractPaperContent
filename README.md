@@ -1,306 +1,317 @@
 # Paper Extractor — 科研文献结构化数据提取工具
 
-从农业科研文献（PDF）中自动提取品种产量试验的结构化数据，支持论文分类、PDF 解析、字段提取、地理编码、单位换算、置信度评估和覆盖率统计。
+从农业科研文献（PDF）中自动提取品种产量试验的结构化数据。支持论文分类、PDF 解析、两阶段结构化提取、地理编码、单位换算、规则验证和覆盖率统计。
 
-## Pipeline 流程
+## 架构概览
+
+项目提供两套 Pipeline，共享相同的数据模型和后处理逻辑：
+
+| Pipeline | 命令 | 适用场景 | 特性 |
+|----------|------|----------|------|
+| **Legacy**（默认） | `python run.py --step extract` | 小规模（<50 篇）、快速验证 | ThreadPoolExecutor 并发 |
+| **LangGraph** | `python run.py --graph --step all` | 大规模（千-万篇）、生产环境 | 断点续跑、条件路由、规则验证、逐篇追加输出 |
+
+### LangGraph Pipeline 流程
 
 ```
 论文 PDF + 元数据 CSV
        │
        ▼
 ┌──────────────┐
-│  1. classify  │  LLM 分类（仅用元数据，无需 PDF）
+│  classify     │  LLM 分类（仅用元数据）
 └──────┬───────┘
        ▼
 ┌──────────────┐
-│  2. filter    │  筛选：research_country=China + 可提取类别
+│  filter       │  筛选：China + 可提取类别
+└──────┬───────┘  ──→ [不可提取] → END
+       ▼
+┌──────────────┐
+│  parse        │  MinerU OCR / 复用已有 MD
+└──────┬───────┘  ──→ [解析失败] → END
+       ▼
+┌──────────────┐
+│  extract_p1   │  Phase 1: 论文级（摘要+大纲+方法 → paper字段+试验章节识别）
+└──────┬───────┘  ──→ [Phase1失败] → END
+       ▼
+┌──────────────┐
+│  extract_p2   │  Phase 2: 试验级（逐章节 → study+variety数据）
 └──────┬───────┘
        ▼
 ┌──────────────┐
-│  3. parse     │  MinerU OCR 解析 PDF → Markdown（仅解析通过筛选的论文）
+│  postprocess  │  Pydantic验证 + 产量换算 + 盆栽过滤 + 品种code回填 + site回填
+└──────┬───────┘  ──→ [后处理失败] → END
+       ▼
+┌──────────────┐
+│  geocode      │  地理编码（查找表 → 百度 → Nominatim → 省会兜底）
 └──────┬───────┘
        ▼
 ┌──────────────┐
-│  4. extract   │  LLM 结构化提取 + Pydantic 验证 + 单位换算
+│  validate     │  规则验证（产量换算一致性、范围检查、增产率校验等）
 └──────┬───────┘
+       ▼  ──→ [无异常] → END
+┌──────────────────┐
+│  targeted_validate│  针对性 LLM 验证（仅验证规则标记为异常的记录）
+└──────┬───────────┘
        ▼
-┌──────────────┐
-│  5. geocode   │  根据地名计算经纬度和海拔
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│  6. output    │  生成 CSV / JSON 输出
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│  7. statistics│  字段覆盖率统计分析
-└──────────────┘
+      END → 追加写入 CSV
+```
+
+### Legacy Pipeline 流程
+
+```
+classify → filter → parse → extract（单次全量提取）→ geocode → output → statistics
 ```
 
 ## 目录结构
 
 ```
 extract4paperQC/
-├── run.py                          # CLI 入口
+├── run.py                          # CLI 入口（--graph 切换 LangGraph）
 ├── config.yaml                     # 配置文件
-├── paper_extractor.py              # 原始单文件脚本（保留参考）
+├── requirements.txt                # Python 依赖
 ├── src/
 │   ├── config.py                   #   配置加载 (AppConfig)
 │   ├── clients/
 │   │   ├── mineru.py               #   MinerU PDF 解析客户端
-│   │   └── llm.py                  #   LLM API 客户端 (OpenAI 兼容)
-│   ├── core/
+│   │   └── llm.py                  #   LLM API 客户端（含限流）
+│   ├── core/                       #   Legacy Pipeline 核心模块
 │   │   ├── loader.py               #   论文发现与元数据匹配
 │   │   ├── classifier.py           #   LLM 分类 + 筛选
-│   │   ├── chunker.py              #   文档分块（按章节切分）
-│   │   ├── extractor.py            #   LLM 结构化提取
-│   │   ├── geocoder.py             #   地理编码（地名 → 经纬度）
-│   │   ├── validator.py            #   置信度验证
-│   │   ├── models.py               #   Pydantic 数据模型 (Paper→Study→Variety)
+│   │   ├── chunker.py              #   文档层级树构建器
+│   │   ├── extractor.py            #   两阶段提取 + 后处理
+│   │   ├── geocoder.py             #   地理编码（5 级策略）
+│   │   ├── validator.py            #   置信度验证（legacy）
+│   │   ├── models.py               #   Pydantic 数据模型
 │   │   └── pipeline.py             #   流程编排与缓存管理
+│   ├── graph/                      #   LangGraph Pipeline
+│   │   ├── state.py                #   PaperState 状态定义
+│   │   ├── nodes.py                #   9 个节点函数
+│   │   ├── rules.py                #   规则验证引擎（纯代码）
+│   │   ├── graph.py                #   StateGraph + 条件路由 + checkpoint
+│   │   └── batch.py                #   BatchOrchestrator（并发+断点续跑）
 │   ├── prompts/
-│   │   ├── classify.txt            #   分类 prompt 模板
-│   │   ├── extract.txt             #   提取 prompt 模板
-│   │   └── validate.txt            #   验证 prompt 模板
+│   │   ├── classify.txt            #   分类 prompt
+│   │   ├── extract_paper.txt       #   Phase 1 提取 prompt
+│   │   ├── extract_study.txt       #   Phase 2 提取 prompt
+│   │   ├── extract.txt             #   Legacy 提取 prompt
+│   │   └── validate.txt            #   Legacy 验证 prompt
 │   └── output/
 │       ├── writer.py               #   CSV / JSON 输出
 │       └── statistics.py           #   覆盖率统计
-├── docs/                           # 参考文档与数据
-│   ├── extract_template_liu.xlsx   #   提取模板（字段定义）
-│   ├── 分类标准.txt                  #   分类标准（5 类定义）
-│   └── 水稻产量_top_10/              #   论文 PDF + 元数据 CSV
-│       ├── pdf_zh/                 #     中文论文
-│       └── pdf_en/                 #     英文论文
-├── cache/                          # 运行缓存（支持断点续跑）
+├── docs/                           # 论文数据
+│   ├── meta.csv                    #   元数据 CSV
+│   └── *.pdf                       #   论文 PDF
+├── cache/                          # 运行缓存
+│   ├── parsed_pdfs.json            #   MinerU 解析缓存
+│   ├── classification_results.json #   分类缓存
+│   ├── extraction_results.json     #   提取缓存（Legacy）
+│   ├── geocoding_cache.json        #   地理编码缓存
+│   └── langgraph_checkpoint.db     #   LangGraph checkpoint（SQLite）
 └── output/
-    ├── parsed/                     # MinerU 解析后的 Markdown + 分块文本
-    ├── results/
-    │   ├── classification/         # 分类结果 CSV + JSON
-    │   ├── extraction/             # 提取结果 CSV + JSON
-    │   ├── confidence/             # 置信度汇总 CSV
-    │   └── statistics/             # 覆盖率统计报告
-    └── logs/                       # 运行日志
+    ├── parsed/                     # MinerU 解析后的 Markdown
+    └── runs/{timestamp}/           # 每次运行的输出
+        ├── logs/                   #   运行日志
+        └── results/
+            ├── classification/     #   分类结果
+            ├── extraction/         #   提取结果 CSV + JSON
+            ├── confidence/         #   置信度汇总
+            └── statistics/         #   覆盖率统计
 ```
 
 ## 安装
 
 ### 依赖
 
-- Python 3.10+
-- requests
-- pyyaml
-- pydantic >= 2.0
-- httpx（地理编码 Nominatim 查询用，可选）
-
 ```bash
-pip install requests pyyaml pydantic httpx
+pip install -r requirements.txt
 ```
+
+核心依赖：Python 3.10+、pydantic >= 2.0、requests、pyyaml、langgraph >= 1.0
 
 ### 外部服务
 
-| 服务 | 用途 | 配置位置 | 是否必须 |
-|------|------|----------|----------|
+| 服务 | 用途 | 配置 | 必须 |
+|------|------|------|------|
 | MinerU | PDF → Markdown 解析 | `config.yaml` → `mineru` | 是 |
-| LLM API (OpenAI 兼容) | 分类 + 提取 + 验证 | `config.yaml` → `llm` | 是 |
-| Nominatim (OpenStreetMap) | 地理编码 | 自动调用，无需配置 | 否（有内置查找表兜底） |
+| LLM API (OpenAI 兼容) | 分类 + 提取 | `config.yaml` → `llm` | 是 |
+| 百度地图 API | 地理编码（经纬度） | `config.yaml` → `geocoding.baidu_api_key` | 否 |
+| Nominatim (OpenStreetMap) | 地理编码备选 | 自动调用，免费 | 否 |
 
 ## 使用方法
 
-### 基本用法
+### LangGraph Pipeline（推荐）
 
 ```bash
-# 完整流程（分类 → 筛选 → 解析 → 提取 → 地理编码 → 输出 → 统计）
+# 完整流程
+python run.py --graph --step all
+
+# 单篇论文测试
+python run.py --graph --step all --paper "早稻"
+
+# 指定配置文件
+python run.py --graph --step all --config /path/to/config.yaml
+```
+
+**LangGraph 特性：**
+- **断点续跑**：SQLite checkpoint，崩溃后自动从最后成功节点恢复
+- **条件路由**：不可提取的论文直接跳过，解析失败不影响其他论文
+- **规则验证**：纯代码检查（产量换算一致性、范围检查、增产率校验等），不消耗 token
+- **针对性 LLM 验证**：仅对规则标记为异常的记录做 LLM 核对
+- **逐篇追加 CSV**：每篇论文处理完立即写入，随时查看进度
+- **并发控制**：可配置同时处理的论文数（默认 10 篇）
+
+### Legacy Pipeline
+
+```bash
+# 完整流程
 python run.py --step all
 
-# 仅分类（基于元数据，不解析 PDF）
+# 仅分类
 python run.py --step classify
 
-# 分类 + 筛选 + 解析 PDF
+# 分类 + 解析
 python run.py --step parse
 
-# 分类 + 筛选 + 解析 + 提取
+# 分类 + 解析 + 提取
 python run.py --step extract
-```
 
-### 指定论文
-
-```bash
-# 按 DOI 或标题子串匹配
-python run.py --step all --paper "10.14168"
-python run.py --step extract --paper "缓控释氮肥"
-```
-
-### 指定配置文件
-
-```bash
-python run.py --step all --config /path/to/config.yaml
+# 指定论文
+python run.py --step extract --paper "10.14168"
 ```
 
 ### 断点续跑
 
-Pipeline 的每个阶段结果都缓存在 `cache/` 目录下：
-
-| 缓存文件 | 对应阶段 |
-|----------|----------|
-| `classification_results.json` | 分类 |
-| `parsed_pdfs.json` | PDF 解析 |
-| `extraction_results.json` | 结构化提取 |
-
-已缓存的论文在重新运行时会自动跳过。清除缓存即可强制重新处理：
+**Legacy Pipeline** — 缓存在 `cache/` 目录，已缓存的论文自动跳过：
 
 ```bash
-# 清除所有缓存
-rm cache/*.json
+# 清除提取缓存（重新提取，保留解析结果）
+del cache\extraction_results.json
 
-# 仅清除提取缓存（重新提取但保留解析结果）
-rm cache/extraction_results.json
+# 清除所有缓存
+del cache\*.json
 ```
+
+**LangGraph Pipeline** — SQLite checkpoint 自动管理，崩溃后重跑同一命令即可从断点继续。
 
 ## 配置说明
 
-所有运行时配置集中在 `config.yaml` 中：
+`config.yaml` 中的关键配置：
 
 ```yaml
 paths:
-  base_dir: "D:\\workspace\\local_project\\extract4paperQC"
-  papers_dir: "docs/水稻产量_top_10"     # 论文数据目录
-  cache_dir: "cache"                     # 运行缓存
-  parsed_dir: "output/parsed"            # 解析后的 Markdown
-  log_dir: "output/logs"                 # 日志文件
-  classification_dir: "output/results/classification"
-  extraction_dir: "output/results/extraction"
-  confidence_dir: "output/results/confidence"
-  statistics_dir: "output/results/statistics"
+  base_dir: "."
+  papers_dir: "docs"           # 论文 PDF + 元数据 CSV
+  cache_dir: "cache"
+  parsed_dir: "output/parsed"
+  runs_dir: "output/runs"
 
 mineru:
   base_url: "http://172.17.1.122"
-  api_key: "your-api-key"
-  lang_list: ["ch", "en"]
-  parse_method: "ocr"        # auto / txt / ocr
-  poll_interval: 5
-  poll_timeout: 600
+  api_key: "your-key"
+  parse_method: "ocr"          # auto / txt / ocr
 
 llm:
   base_url: "http://182.92.166.143:3200/v1"
-  api_key: "your-api-key"
+  api_key: "your-key"
   model: "DSv4-flash"
   max_tokens: 8192
   temperature: 0.1
+  max_retries: 3
 
 extraction:
-  max_text_chars: 80000      # 发送给 LLM 的最大文本长度
-  extractable_categories:    # 允许提取的论文分类
+  max_text_chars: 120000       # 单章节最大字符数
+  extractable_categories:
     - "varietal_yield"
     - "management_yield"
-  confidence_threshold: 0.5
 
 geocoding:
-  enabled: true              # 是否启用地理编码后处理
-  use_nominatim: true        # 是否使用 Nominatim 在线查询
-  nominatim_delay: 1.1       # Nominatim 请求间隔（秒）
+  enabled: true
+  use_nominatim: false
+  baidu_api_key: "your-key"    # 百度地图 API Key
+
+concurrency:
+  classify_workers: 5
+  parse_workers: 5
+  extract_workers: 3           # LangGraph 并发论文数
 ```
-
-## 输出文件
-
-每次运行生成带时间戳的输出文件：
-
-### 分类结果 (`output/results/classification/`)
-
-| 文件 | 说明 |
-|------|------|
-| `classification_{ts}.csv` | 每篇论文一行，含分类、置信度、关键信号 |
-| `classification_{ts}.json` | 完整分类结果（JSON） |
-
-### 提取结果 (`output/results/extraction/`)
-
-| 文件 | 说明 |
-|------|------|
-| `paper_{ts}.csv` | 每篇论文一行（6 字段） |
-| `study_{ts}.csv` | 每个试验一行（19 字段） |
-| `variety_{ts}.csv` | 每个品种一行（17 字段） |
-| `full_flat_{ts}.csv` | 完整扁平化（所有 40+ 字段） |
-| `extraction_{ts}.json` | 完整层级结构 JSON |
-
-### 置信度 (`output/results/confidence/`)
-
-| 文件 | 说明 |
-|------|------|
-| `confidence_summary_{ts}.csv` | 每篇论文的置信度和逻辑检查结果 |
-
-### 统计报告 (`output/results/statistics/`)
-
-| 文件 | 说明 |
-|------|------|
-| `paper_coverage_{ts}.csv` | 每篇论文的字段覆盖率 |
-| `field_coverage_{ts}.csv` | 每个字段的全局命中率 |
-| `summary_{ts}.json` | 批次总体统计 |
-| `report_{ts}.md` | 可读统计报告（含进度条和可视化） |
 
 ## 数据模型
 
-三级层次结构，使用 Pydantic v2 定义：
+三级层次结构，Pydantic v2 定义（共 42 字段）：
 
 ```
 ExtractionResult
-├── paper: PaperInfo          (8 字段)
+├── paper: PaperInfo          (8 字段: DOI, 标题, 年份, 期刊, 作物等)
 └── studies: List[StudyInfo]
-    ├── study 级字段           (18 字段)
+    ├── study 级字段           (20 字段: 试验名称, 年份, 地点, 经纬度, 试验设计等)
     └── varieties: List[VarietyYield]
-        └── variety 级字段     (14 字段)
+        └── variety 级字段     (14 字段: 品种名, 产量, 对照, 增产率等)
 ```
 
 ### 字段标记
 
-- **[REQUIRED]** — LLM 必须填充
-- **[PROGRAM]** — 程序自动计算（LLM 不要填），如 `yield_standard_value`
-- **[DO NOT FILL]** — 程序后处理填充（LLM 不要填），如 `latitude`, `longitude`, `altitude`
+| 标记 | 含义 |
+|------|------|
+| `[REQUIRED]` | LLM 必须填充 |
+| `[OPTIONAL]` | LLM 有则填（如论文中明确写出的经纬度） |
+| `[PROGRAM]` | 程序自动计算（如 yield_standard_value） |
+| `[DO NOT FILL]` | 程序后处理填充（如 geo_source, notes） |
 
 ### 单位换算
 
-LLM 只提取原始产量值和单位，程序自动换算为标准 kg/ha：
+LLM 提取原始产量值和单位，程序自动换算为 kg/ha：
 
-| 原始单位 | 换算规则 |
-|----------|----------|
-| kg/亩 | × 15 |
-| t/ha | × 1000 |
-| kg/ha | 不变 |
-| g/plot, kg/plot | 需要小区面积，暂无法自动换算 |
+| 原始单位 | 换算 | 示例 |
+|----------|------|------|
+| kg/ha, kg/hm² | × 1 | 8728.5 → 8728.5 |
+| t/ha, t/hm² | × 1000 | 8.5 → 8500.0 |
+| kg/亩, kg/mu | × 15 | 612.5 → 9187.5 |
+| kg/667m² | × 15 | 482.0 → 7230.0 |
+| 斤/亩 | × 7.5 | 800 → 6000.0 |
+| g/株, kg/plot | 不可换算 → None | 需要额外信息 |
+
+### 地理编码策略（5 级优先）
+
+```
+论文中明确写出的经纬度 → 内置机构查找表 → 百度地图 API → Nominatim → 省会兜底
+     (geo_source=paper)   (geo_source=lookup)  (geo_source=baidu)  (nominatim)  (province_fallback)
+```
+
+## 后处理流水线
+
+提取完成后自动执行以下后处理步骤：
+
+1. **Pydantic 验证** — 数据模型校验 + 类型转换
+2. **产量换算** — yield_raw → yield_standard (kg/ha)
+3. **多站点检测** — site_name 含 "、" 的标记警告
+4. **variety_code 回填** — 同一品种名在不同 study 间的审定编号一致性
+5. **盆栽试验过滤** — 剔除盆栽、温室、单株计产等非大田试验
+6. **无产量 study 过滤** — 剔除 yield_raw_unit 为 % 或无产量数据的 study
+7. **site 信息回填** — 同一论文内只有一个地点时，回填到其他 study
+8. **规则验证** — 产量换算一致性、范围检查、增产率校验、跨 study 波动检查
+9. **地理编码** — 根据地名填充经纬度和海拔
+10. **针对性 LLM 验证**（仅 LangGraph）— 对规则标记异常的记录做 LLM 核对
 
 ## 论文分类标准
 
-论文分为五类（详细定义见 `docs/分类标准.txt`）：
-
 | 类别 | 说明 | 是否提取 |
 |------|------|----------|
-| `varietal_yield` | 品种型产量 — 核心关注基因型(G)表现 | 是 |
-| `management_yield` | 管理/环境型产量 — 核心关注栽培措施(M)或环境(E) | 是 |
-| `remote_sensing_yield` | 遥感/区域宏观产量 — 宏观空间尺度 | 否 |
+| `varietal_yield` | 品种型产量 — 核心关注基因型表现 | 是 |
+| `management_yield` | 管理/环境型产量 — 核心关注栽培措施 | 是 |
+| `remote_sensing_yield` | 遥感/区域宏观产量 | 否 |
 | `mechanistic_yield` | 机制型产量 — 分子/生理机制 | 否 |
 | `irrelevant` | 无关 — 非产量研究 | 否 |
 
 ## Prompt 调优
 
-分类、提取、验证的 prompt 模板存放在 `src/prompts/` 目录下，可独立编辑而不需要修改代码。修改后重新运行即可生效（需清除对应阶段的缓存）。
+Prompt 模板在 `src/prompts/` 下，修改后无需改代码：
 
-## 论文数据格式
-
-`docs/水稻产量_top_10/` 目录结构：
-
-```
-水稻产量_top_10/
-├── pdf_en/                     # 英文论文
-│   ├── {doi_folder}/
-│   │   └── {paper}.pdf
-│   ├── 水稻产量_en_{ts}.csv         # 元数据 CSV
-│   └── 水稻产量_en_{ts}_report.csv  # 下载报告
-└── pdf_zh/                     # 中文论文
-    ├── {doi_folder}/
-    │   └── {paper}.pdf
-    ├── 水稻产量_zh_{ts}.csv
-    └── 水稻产量_zh_{ts}_port.csv
-```
-
-元数据 CSV 必须包含 `doi`, `title`, `abstract`, `keywords`, `publication_year`, `journal`, `pdf_file_path` 等字段。
+| 文件 | 用途 | 修改后操作 |
+|------|------|-----------|
+| `classify.txt` | 论文分类 | 清除 `cache/classification_results.json` |
+| `extract_paper.txt` | Phase 1 提取 | 清除 `cache/extraction_results.json` |
+| `extract_study.txt` | Phase 2 提取 | 清除 `cache/extraction_results.json` |
+| `extract.txt` | Legacy 提取 | 清除 `cache/extraction_results.json` |
 
 ## License
 
