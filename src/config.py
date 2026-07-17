@@ -34,7 +34,7 @@ class MinerUConfig:
 
 @dataclass
 class LLMConfig:
-    base_url: str = "http://182.92.166.143:3200/v1"
+    base_url: str = "http://135.98.25.8:8000/v1"
     api_key: str = ""
     model: str = "DSv4-flash"
     max_tokens: int = 8192
