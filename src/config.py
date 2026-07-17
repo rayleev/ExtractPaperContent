@@ -61,14 +61,14 @@ class GeocodingConfig:
 @dataclass
 class ConcurrencyConfig:
     classify_workers: int = 5   # 分类并发数
-    parse_workers: int = 5      # MinerU 解析并发数
-    extract_workers: int = 5    # LLM 提取并发数
+    parse_workers: int = 8      # MinerU 解析并发数
+    extract_workers: int = 3    # LLM 提取并发数
 
 
 @dataclass
 class AppConfig:
     base_dir: Path = field(default_factory=lambda: Path("."))
-    papers_dir: Path = field(default_factory=lambda: Path("docs/水稻产量_top_10"))
+    papers_dir: Path = field(default_factory=lambda: Path("docs"))
     cache_dir: Path = field(default_factory=lambda: Path("cache"))
     parsed_dir: Path = field(default_factory=lambda: Path("output/parsed"))
     runs_dir: Path = field(default_factory=lambda: Path("output/runs"))
@@ -182,13 +182,13 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     conc_raw = raw.get("concurrency", {})
     concurrency = ConcurrencyConfig(
         classify_workers=conc_raw.get("classify_workers", 5),
-        parse_workers=conc_raw.get("parse_workers", 5),
-        extract_workers=conc_raw.get("extract_workers", 5),
+        parse_workers=conc_raw.get("parse_workers", 8),
+        extract_workers=conc_raw.get("extract_workers", 3),
     )
 
     return AppConfig(
         base_dir=base,
-        papers_dir=Path(paths.get("papers_dir", "docs/水稻产量_top_10")),
+        papers_dir=Path(paths.get("papers_dir", "docs")),
         cache_dir=Path(paths.get("cache_dir", "cache")),
         parsed_dir=Path(paths.get("parsed_dir", "output/parsed")),
         runs_dir=Path(paths.get("runs_dir", "output/runs")),

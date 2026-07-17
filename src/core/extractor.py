@@ -185,12 +185,6 @@ def extract_papers(
                     study["notes"] = ((study.get("notes") or "") +
                                      " [多站点警告]").strip()
 
-        # 置信度验证
-        confidence_result = None
-        if extraction:
-            from src.core.validator import validate_extraction
-            confidence_result = validate_extraction(paper, extraction, config, llm)
-
         return {
             "paper_id": pid,
             "doi": paper["doi"],
@@ -198,7 +192,6 @@ def extract_papers(
             "language": paper["language"],
             "category": cls.get("category"),
             "extraction": extraction,
-            "confidence": confidence_result,
             "extracted_at": datetime.now().isoformat(),
         }
 

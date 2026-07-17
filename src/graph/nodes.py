@@ -58,7 +58,8 @@ def classify_node(
         title=paper_meta.get("title", ""),
         abstract=paper_meta.get("abstract", ""),
         keywords=paper_meta.get("keywords", ""),
-        year=paper_meta.get("year", ""),
+        journal=paper_meta.get("journal", ""),
+        language="中文" if paper_meta.get("language") == "zh" else "English",
     )
 
     result = llm.call_json(prompt, max_tokens=1000)

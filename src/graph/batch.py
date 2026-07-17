@@ -205,7 +205,7 @@ class BatchOrchestrator:
                             initial_state.update(node_output)
 
         except Exception as e:
-            logger.error(f"  [{pid[:25]}] Graph execution failed: {e}")
+            logger.error(f"  [{pid[:25]}] Graph execution failed: {e}", exc_info=True)
             initial_state["status"] = "failed"
             initial_state["errors"] = initial_state.get("errors", []) + [
                 {"node": "graph", "error": str(e), "timestamp": datetime.now().isoformat()}

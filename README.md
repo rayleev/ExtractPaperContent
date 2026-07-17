@@ -80,7 +80,6 @@ extract4paperQC/
 │   │   ├── chunker.py              #   文档层级树构建器
 │   │   ├── extractor.py            #   两阶段提取 + 后处理
 │   │   ├── geocoder.py             #   地理编码（5 级策略）
-│   │   ├── validator.py            #   置信度验证（legacy）
 │   │   ├── models.py               #   Pydantic 数据模型
 │   │   └── pipeline.py             #   流程编排与缓存管理
 │   ├── graph/                      #   LangGraph Pipeline
@@ -94,7 +93,6 @@ extract4paperQC/
 │   │   ├── extract_paper.txt       #   Phase 1 提取 prompt
 │   │   ├── extract_study.txt       #   Phase 2 提取 prompt
 │   │   ├── extract.txt             #   Legacy 提取 prompt
-│   │   └── validate.txt            #   Legacy 验证 prompt
 │   └── output/
 │       ├── writer.py               #   CSV / JSON 输出
 │       └── statistics.py           #   覆盖率统计
@@ -114,7 +112,6 @@ extract4paperQC/
         └── results/
             ├── classification/     #   分类结果
             ├── extraction/         #   提取结果 CSV + JSON
-            ├── confidence/         #   置信度汇总
             └── statistics/         #   覆盖率统计
 ```
 
