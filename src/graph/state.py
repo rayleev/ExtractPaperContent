@@ -13,8 +13,9 @@ class PaperState(TypedDict, total=False):
     """单篇论文的处理状态。"""
 
     # ── 输入（BatchOrchestrator 设置）──
-    paper_id: str                       # P{timestamp}_{NNN}
+    paper_id: str                       # P_{md5_fingerprint}
     paper_meta: dict                    # {doi, title, year, journal, pdf_path, md_path, ...}
+    stop_after: str                     # 分步执行：在此节点后停止（默认 "" = 跑完整流程）
 
     # ── classify 节点 ──
     classification: dict                # {category, language, reasoning, ...}

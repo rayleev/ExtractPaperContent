@@ -1,15 +1,21 @@
 """
 PaperProcessingGraph — LangGraph StateGraph 定义。
 
-将各节点串联为有向图，支持条件路由、checkpoint、错误隔离。
+将各节点串联为有向图，支持条件路由、checkpoint、错误隔离、分步执行。
 
 Graph 流程:
   classify → filter → [extractable?] → parse → extract_phase1 → extract_phase2
     → postprocess → geocode → validate → [flagged?] → targeted_llm_validate → END
+
+分步执行:
+  通过 PaperState.stop_after 控制，graph 在指定节点后提前终止。
+  支持值: "classify" | "filter" | "parse" | "extract_phase1" | "extract_phase2"
+         | "postprocess" | "geocode" | "validate" | "" (完整流程)
 """
 
 from __future__ import annotations
 import logging
+import time
 from typing import Optional
 
 from langgraph.graph import StateGraph, START, END
@@ -35,96 +41,96 @@ from src.graph.nodes import (
 logger = logging.getLogger("paper_extractor")
 
 
-def _make_classify_node(config: AppConfig, llm: LLMClient):
-    def node(state: PaperState) -> dict:
-        return classify_node(state, config, llm)
-    return node
+# ── 节点计时包装 ──────────────────────────────────────────
+
+def _timed(node_name: str, func):
+    """包装节点函数，记录并打印执行耗时。"""
+    def wrapper(state: PaperState) -> dict:
+        pid = state.get("paper_id", "?")[:25]
+        start = time.time()
+        result = func(state)
+        elapsed = time.time() - start
+        # 超过 1 秒的节点打印 INFO，否则 DEBUG
+        if elapsed > 1.0:
+            logger.info(f"  [{pid}] {node_name}: {elapsed:.1f}s")
+        else:
+            logger.debug(f"  [{pid}] {node_name}: {elapsed:.2f}s")
+        return result
+    return wrapper
 
 
-def _make_filter_node(config: AppConfig):
-    def node(state: PaperState) -> dict:
-        return filter_node(state, config)
-    return node
+# ── 分步执行：stop_after 路由 ──────────────────────────────
+
+def _should_stop(state: PaperState, node_name: str) -> bool:
+    """检查是否应在当前节点后停止（分步执行）。"""
+    return state.get("stop_after") == node_name
 
 
-def _make_parse_node(config: AppConfig, mineru_client: Optional[MinerUClient]):
-    def node(state: PaperState) -> dict:
-        return parse_node(state, config, mineru_client)
-    return node
-
-
-def _make_extract_phase1_node(config: AppConfig, llm: LLMClient):
-    def node(state: PaperState) -> dict:
-        return extract_phase1_node(state, config, llm)
-    return node
-
-
-def _make_extract_phase2_node(config: AppConfig, llm: LLMClient):
-    def node(state: PaperState) -> dict:
-        return extract_phase2_node(state, config, llm)
-    return node
-
-
-def _make_postprocess_node(config: AppConfig):
-    def node(state: PaperState) -> dict:
-        return postprocess_node(state, config)
-    return node
-
-
-def _make_geocode_node(config: AppConfig, geocoder: Geocoder):
-    def node(state: PaperState) -> dict:
-        return geocode_node(state, config, geocoder)
-    return node
-
-
-def _make_validate_node(config: AppConfig):
-    def node(state: PaperState) -> dict:
-        return validate_node(state, config)
-    return node
-
-
-def _make_targeted_llm_validate_node(config: AppConfig, llm: LLMClient):
-    def node(state: PaperState) -> dict:
-        return targeted_llm_validate_node(state, config, llm)
-    return node
-
-
-# ── 条件路由函数 ──────────────────────────────────────────
-
-def _should_extract(state: PaperState) -> str:
-    """filter 后的路由：是否可提取。"""
-    if state.get("status") == "skipped":
-        return "skip"
-    return "extract"
-
-
-def _should_parse(state: PaperState) -> str:
-    """parse 后的路由：是否解析成功。"""
-    if state.get("status") == "failed":
-        return "fail"
+def _route_after_classify(state: PaperState) -> str:
+    """classify 后：检查 stop_after，否则进入 filter。"""
+    if _should_stop(state, "classify"):
+        return "done"
     return "continue"
 
 
-def _has_flagged_records(state: PaperState) -> str:
-    """validate 后的路由：是否有需要 LLM 验证的记录。"""
+def _route_after_filter(state: PaperState) -> str:
+    """filter 后：先检查筛选条件，再检查 stop_after。"""
+    if state.get("status") == "skipped":
+        return "skip"
+    if _should_stop(state, "filter"):
+        return "done"
+    return "extract"
+
+
+def _route_after_parse(state: PaperState) -> str:
+    """parse 后：先检查是否失败，再检查 stop_after。"""
+    if state.get("status") == "failed":
+        return "fail"
+    if _should_stop(state, "parse"):
+        return "done"
+    return "continue"
+
+
+def _route_after_phase1(state: PaperState) -> str:
+    """extract_phase1 后：先检查是否失败，再检查 stop_after。"""
+    if state.get("status") == "phase1_failed":
+        return "skip"
+    if _should_stop(state, "extract_phase1"):
+        return "done"
+    return "continue"
+
+
+def _route_after_phase2(state: PaperState) -> str:
+    """extract_phase2 后：检查 stop_after，否则进入 postprocess。"""
+    if _should_stop(state, "extract_phase2"):
+        return "done"
+    return "continue"
+
+
+def _route_after_postprocess(state: PaperState) -> str:
+    """postprocess 后：先检查是否失败，再检查 stop_after。"""
+    if state.get("status") == "failed":
+        return "fail"
+    if _should_stop(state, "postprocess"):
+        return "done"
+    return "continue"
+
+
+def _route_after_geocode(state: PaperState) -> str:
+    """geocode 后：检查 stop_after，否则进入 validate。"""
+    if _should_stop(state, "geocode"):
+        return "done"
+    return "continue"
+
+
+def _route_after_validate(state: PaperState) -> str:
+    """validate 后：检查 flagged 记录 + stop_after。"""
+    if _should_stop(state, "validate"):
+        return "done"
     flagged = state.get("flagged_records", [])
     if flagged:
         return "llm_validate"
     return "done"
-
-
-def _should_do_phase2(state: PaperState) -> str:
-    """phase1 后的路由：是否有实验章节。"""
-    if state.get("status") == "phase1_failed":
-        return "skip"
-    return "continue"
-
-
-def _should_geocode(state: PaperState) -> str:
-    """postprocess 后是否需要地理编码。"""
-    if state.get("status") == "failed":
-        return "fail"
-    return "continue"
 
 
 # ── 构建 Graph ──────────────────────────────────────────────
@@ -139,93 +145,58 @@ def build_paper_graph(
     """
     构建单篇论文的 StateGraph。
 
-    Args:
-        config: 应用配置
-        llm: LLM 客户端
-        mineru_client: MinerU 客户端（可为 None）
-        geocoder: 地理编码器
-        checkpoint_path: SQLite checkpoint 文件路径
-
-    Returns:
-        编译后的 LangGraph graph
+    每个节点都包装了计时器，日志中会显示各节点执行耗时。
+    支持通过 PaperState.stop_after 字段控制分步执行。
     """
     graph = StateGraph(PaperState)
 
-    # ── 注册节点 ──
-    graph.add_node("classify", _make_classify_node(config, llm))
-    graph.add_node("filter", _make_filter_node(config))
-    graph.add_node("parse", _make_parse_node(config, mineru_client))
-    graph.add_node("extract_phase1", _make_extract_phase1_node(config, llm))
-    graph.add_node("extract_phase2", _make_extract_phase2_node(config, llm))
-    graph.add_node("postprocess", _make_postprocess_node(config))
-    graph.add_node("geocode", _make_geocode_node(config, geocoder))
-    graph.add_node("validate", _make_validate_node(config))
-    graph.add_node("targeted_validate", _make_targeted_llm_validate_node(config, llm))
+    # ── 注册节点（全部带计时包装）──
+    graph.add_node("classify", _timed("classify",
+        lambda s: classify_node(s, config, llm)))
+    graph.add_node("filter", _timed("filter",
+        lambda s: filter_node(s, config)))
+    graph.add_node("parse", _timed("parse",
+        lambda s: parse_node(s, config, mineru_client)))
+    graph.add_node("extract_phase1", _timed("extract_phase1",
+        lambda s: extract_phase1_node(s, config, llm)))
+    graph.add_node("extract_phase2", _timed("extract_phase2",
+        lambda s: extract_phase2_node(s, config, llm)))
+    graph.add_node("postprocess", _timed("postprocess",
+        lambda s: postprocess_node(s, config)))
+    graph.add_node("geocode", _timed("geocode",
+        lambda s: geocode_node(s, config, geocoder)))
+    graph.add_node("validate", _timed("validate",
+        lambda s: validate_node(s, config)))
+    graph.add_node("targeted_validate", _timed("targeted_validate",
+        lambda s: targeted_llm_validate_node(s, config, llm)))
 
-    # ── 边定义 ──
-    # START → classify
+    # ── 边定义（全部支持 stop_after 分步停止）──
     graph.add_edge(START, "classify")
 
-    # classify → filter
-    graph.add_edge("classify", "filter")
+    graph.add_conditional_edges("classify", _route_after_classify,
+        {"continue": "filter", "done": END})
 
-    # filter → conditional
-    graph.add_conditional_edges(
-        "filter",
-        _should_extract,
-        {
-            "extract": "parse",
-            "skip": END,
-        },
-    )
+    graph.add_conditional_edges("filter", _route_after_filter,
+        {"extract": "parse", "skip": END, "done": END})
 
-    # parse → conditional
-    graph.add_conditional_edges(
-        "parse",
-        _should_parse,
-        {
-            "continue": "extract_phase1",
-            "fail": END,
-        },
-    )
+    graph.add_conditional_edges("parse", _route_after_parse,
+        {"continue": "extract_phase1", "fail": END, "done": END})
 
-    # extract_phase1 → conditional
-    graph.add_conditional_edges(
-        "extract_phase1",
-        _should_do_phase2,
-        {
-            "continue": "extract_phase2",
-            "skip": END,
-        },
-    )
+    graph.add_conditional_edges("extract_phase1", _route_after_phase1,
+        {"continue": "extract_phase2", "skip": END, "done": END})
 
-    # extract_phase2 → postprocess
-    graph.add_edge("extract_phase2", "postprocess")
+    graph.add_conditional_edges("extract_phase2", _route_after_phase2,
+        {"continue": "postprocess", "done": END})
 
-    # postprocess → conditional
-    graph.add_conditional_edges(
-        "postprocess",
-        _should_geocode,
-        {
-            "continue": "geocode",
-            "fail": END,
-        },
-    )
+    graph.add_conditional_edges("postprocess", _route_after_postprocess,
+        {"continue": "geocode", "fail": END, "done": END})
 
-    # geocode → validate
-    graph.add_edge("geocode", "validate")
+    graph.add_conditional_edges("geocode", _route_after_geocode,
+        {"continue": "validate", "done": END})
 
-    # validate → conditional
-    graph.add_conditional_edges(
-        "validate",
-        _has_flagged_records,
-        {
-            "llm_validate": "targeted_validate",
-            "done": END,
-        },
-    )
+    graph.add_conditional_edges("validate", _route_after_validate,
+        {"llm_validate": "targeted_validate", "done": END})
 
-    # targeted_validate → END
     graph.add_edge("targeted_validate", END)
 
     # ── Checkpoint ──
@@ -235,6 +206,5 @@ def build_paper_graph(
         conn = sqlite3.connect(checkpoint_path, check_same_thread=False)
         checkpointer = SqliteSaver(conn)
 
-    # 编译
     compiled = graph.compile(checkpointer=checkpointer)
     return compiled

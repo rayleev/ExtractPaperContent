@@ -1,24 +1,17 @@
 # Paper Extractor — 科研文献结构化数据提取工具
 
-从农业科研文献（PDF）中自动提取品种产量试验的结构化数据。支持论文分类、PDF 解析、两阶段结构化提取、地理编码、单位换算、规则验证和覆盖率统计。
+基于 LangGraph 的农业科研文献结构化数据提取系统。从 PDF 论文中自动提取品种产量试验数据，支持论文分类、PDF 解析、两阶段 LLM 提取、地理编码、单位换算、规则验证和覆盖率统计。
 
 ## 架构概览
 
-项目提供两套 Pipeline，共享相同的数据模型和后处理逻辑：
-
-| Pipeline | 命令 | 适用场景 | 特性 |
-|----------|------|----------|------|
-| **Legacy**（默认） | `python run.py --step extract` | 小规模（<50 篇）、快速验证 | ThreadPoolExecutor 并发 |
-| **LangGraph** | `python run.py --graph --step all` | 大规模（千-万篇）、生产环境 | 断点续跑、条件路由、规则验证、逐篇追加输出 |
-
-### LangGraph Pipeline 流程
+采用 LangGraph StateGraph 有向图架构，每篇论文独立走完整条流程，通过 checkpoint 实现断点续跑。所有输出统一写入 SQLite 数据库，支持 1500 万级论文的大规模存储和查询。
 
 ```
 论文 PDF + 元数据 CSV
        │
        ▼
 ┌──────────────┐
-│  classify     │  LLM 分类（仅用元数据）
+│  classify     │  LLM 分类（仅用元数据，支持多作物配置）
 └──────┬───────┘
        ▼
 ┌──────────────┐
@@ -26,7 +19,7 @@
 └──────┬───────┘  ──→ [不可提取] → END
        ▼
 ┌──────────────┐
-│  parse        │  MinerU OCR / 复用已有 MD
+│  parse        │  MinerU OCR / 复用已有 MD + 文档树构建
 └──────┬───────┘  ──→ [解析失败] → END
        ▼
 ┌──────────────┐
@@ -34,7 +27,7 @@
 └──────┬───────┘  ──→ [Phase1失败] → END
        ▼
 ┌──────────────┐
-│  extract_p2   │  Phase 2: 试验级（逐章节 → study+variety数据）
+│  extract_p2   │  Phase 2: 试验级（逐章节 → study+variety数据）⚠️ 主要耗时
 └──────┬───────┘
        ▼
 ┌──────────────┐
@@ -53,20 +46,25 @@
 │  targeted_validate│  针对性 LLM 验证（仅验证规则标记为异常的记录）
 └──────┬───────────┘
        ▼
-      END → 追加写入 CSV
+      END → SQLite DB + CSV 导出 + 验证报告 + 覆盖率统计
 ```
 
-### Legacy Pipeline 流程
+**核心特性：**
 
-```
-classify → filter → parse → extract（单次全量提取）→ geocode → output → statistics
-```
+- 断点续跑：SQLite checkpoint，崩溃后从最后成功节点恢复
+- 条件路由：不可提取/解析失败的论文直接跳过
+- 节点计时：每个节点自动记录执行耗时（日志可见）
+- 滑动窗口并发：ThreadPoolExecutor 始终保持 N 个任务在跑，完成即补
+- 分步执行：`--step classify/parse/extract`，自动补全前置步骤
+- 防重机制：稳定 paper_id（MD5 指纹）+ paper_status 注册表
+- 多作物支持：config.yaml 配置目标作物列表，prompt 动态联动
+- 统一 SQLite 输出：所有数据写入单个 DB 文件，含完整数据字典
 
 ## 目录结构
 
 ```
 extract4paperQC/
-├── run.py                          # CLI 入口（--graph 切换 LangGraph）
+├── run.py                          # CLI 入口
 ├── config.yaml                     # 配置文件
 ├── requirements.txt                # Python 依赖
 ├── src/
@@ -74,50 +72,63 @@ extract4paperQC/
 │   ├── clients/
 │   │   ├── mineru.py               #   MinerU PDF 解析客户端
 │   │   └── llm.py                  #   LLM API 客户端（含限流）
-│   ├── core/                       #   Legacy Pipeline 核心模块
+│   ├── core/                       #   共享基础模块
 │   │   ├── loader.py               #   论文发现与元数据匹配
-│   │   ├── classifier.py           #   LLM 分类 + 筛选
 │   │   ├── chunker.py              #   文档层级树构建器
-│   │   ├── extractor.py            #   两阶段提取 + 后处理
 │   │   ├── geocoder.py             #   地理编码（5 级策略）
-│   │   ├── models.py               #   Pydantic 数据模型
-│   │   └── pipeline.py             #   流程编排与缓存管理
+│   │   └── models.py               #   Pydantic 数据模型 + 产量换算
 │   ├── graph/                      #   LangGraph Pipeline
 │   │   ├── state.py                #   PaperState 状态定义
-│   │   ├── nodes.py                #   9 个节点函数
+│   │   ├── graph.py                #   StateGraph + 条件路由 + 节点计时 + 分步控制
+│   │   ├── batch.py                #   BatchOrchestrator（并发+断点续跑+注册表）
+│   │   ├── output.py               #   SQLite 输出（建表/写入/导出/数据字典）
 │   │   ├── rules.py                #   规则验证引擎（纯代码）
-│   │   ├── graph.py                #   StateGraph + 条件路由 + checkpoint
-│   │   └── batch.py                #   BatchOrchestrator（并发+断点续跑）
+│   │   ├── postprocess_utils.py    #   后处理工具（过滤/回填）
+│   │   └── nodes/                  #   节点函数（每个节点一个文件）
+│   │       ├── classify.py         #     分类节点（支持多作物配置）
+│   │       ├── filter.py           #     过滤节点
+│   │       ├── parse.py            #     解析节点
+│   │       ├── extract_phase1.py   #     Phase 1 提取
+│   │       ├── extract_phase2.py   #     Phase 2 提取（主要耗时）
+│   │       ├── postprocess.py      #     后处理节点
+│   │       ├── geocode.py          #     地理编码节点
+│   │       └── validate.py         #     规则验证 + 针对性 LLM 验证
 │   ├── prompts/
-│   │   ├── classify.txt            #   分类 prompt
+│   │   ├── classify.txt            #   分类 prompt（支持 {crop_list}）
 │   │   ├── extract_paper.txt       #   Phase 1 提取 prompt
-│   │   ├── extract_study.txt       #   Phase 2 提取 prompt
-│   │   ├── extract.txt             #   Legacy 提取 prompt
+│   │   └── extract_study.txt       #   Phase 2 提取 prompt
 │   └── output/
-│       ├── writer.py               #   CSV / JSON 输出
 │       └── statistics.py           #   覆盖率统计
 ├── docs/                           # 论文数据
 │   ├── meta.csv                    #   元数据 CSV
 │   └── *.pdf                       #   论文 PDF
 ├── cache/                          # 运行缓存
-│   ├── parsed_pdfs.json            #   MinerU 解析缓存
-│   ├── classification_results.json #   分类缓存
-│   ├── extraction_results.json     #   提取缓存（Legacy）
 │   ├── geocoding_cache.json        #   地理编码缓存
 │   └── langgraph_checkpoint.db     #   LangGraph checkpoint（SQLite）
 └── output/
+    ├── paper_data.db               # 主数据库（固定位置，跨运行共享）
     ├── parsed/                     # MinerU 解析后的 Markdown
     └── runs/{timestamp}/           # 每次运行的输出
-        ├── logs/                   #   运行日志
+        ├── logs/
+        │   └── extractor.log       #   运行日志（含节点计时）
         └── results/
-            ├── classification/     #   分类结果
-            ├── extraction/         #   提取结果 CSV + JSON
-            └── statistics/         #   覆盖率统计
+            ├── classification/
+            │   └── classification.csv
+            ├── extraction/
+            │   ├── papers.csv
+            │   ├── studies.csv
+            │   ├── varieties.csv
+            │   └── varieties_flat.csv  # 交接用宽表
+            ├── validation/
+            │   └── validation_issues.csv
+            └── statistics/
+                ├── report.md
+                ├── summary.json
+                ├── paper_coverage.csv
+                └── field_coverage.csv
 ```
 
 ## 安装
-
-### 依赖
 
 ```bash
 pip install -r requirements.txt
@@ -136,59 +147,40 @@ pip install -r requirements.txt
 
 ## 使用方法
 
-### LangGraph Pipeline（推荐）
-
 ```bash
-# 完整流程
-python run.py --graph --step all
+# 完整流程（默认）
+python run.py
 
-# 单篇论文测试
-python run.py --graph --step all --paper "早稻"
+# 分步执行（自动补全前置步骤）
+python run.py --step classify          # 仅分类（快速检查分类结果）
+python run.py --step parse             # 分类 + 解析 PDF
+python run.py --step extract           # 完整流程
+
+# 处理特定论文（按 DOI 或标题关键词匹配）
+python run.py --paper "早稻"
 
 # 指定配置文件
-python run.py --graph --step all --config /path/to/config.yaml
-```
-
-**LangGraph 特性：**
-- **断点续跑**：SQLite checkpoint，崩溃后自动从最后成功节点恢复
-- **条件路由**：不可提取的论文直接跳过，解析失败不影响其他论文
-- **规则验证**：纯代码检查（产量换算一致性、范围检查、增产率校验等），不消耗 token
-- **针对性 LLM 验证**：仅对规则标记为异常的记录做 LLM 核对
-- **逐篇追加 CSV**：每篇论文处理完立即写入，随时查看进度
-- **并发控制**：可配置同时处理的论文数（默认 10 篇）
-
-### Legacy Pipeline
-
-```bash
-# 完整流程
-python run.py --step all
-
-# 仅分类
-python run.py --step classify
-
-# 分类 + 解析
-python run.py --step parse
-
-# 分类 + 解析 + 提取
-python run.py --step extract
-
-# 指定论文
-python run.py --step extract --paper "10.14168"
+python run.py --config /path/to/config.yaml
 ```
 
 ### 断点续跑
 
-**Legacy Pipeline** — 缓存在 `cache/` 目录，已缓存的论文自动跳过：
+SQLite checkpoint 自动管理，崩溃后重跑同一命令即可从断点继续：
 
 ```bash
-# 清除提取缓存（重新提取，保留解析结果）
-del cache\extraction_results.json
+# 清除 checkpoint（从头开始）
+del cache\langgraph_checkpoint.db
 
-# 清除所有缓存
-del cache\*.json
+# 清除地理编码缓存
+del cache\geocoding_cache.json
 ```
 
-**LangGraph Pipeline** — SQLite checkpoint 自动管理，崩溃后重跑同一命令即可从断点继续。
+### 防重机制
+
+- **稳定 paper_id**：`P_{MD5(标题归一化)[:10]}`，同一标题跨运行 ID 不变
+- **paper_status 注册表**：SQLite 表记录每篇论文完成的最高步骤
+- 跳过逻辑：`--step classify` 跳过已分类的，`--step parse` 跳过已解析的，以此类推
+- 强制重跑：从 `paper_status` 表删除对应记录即可
 
 ## 配置说明
 
@@ -217,9 +209,13 @@ llm:
 
 extraction:
   max_text_chars: 120000       # 单章节最大字符数
-  extractable_categories:
+  extractable_categories:      # 可提取的论文类别
     - "varietal_yield"
     - "management_yield"
+  crops:                       # 目标作物列表（影响分类和筛选）
+    - "水稻/Rice"
+    - "玉米/Maize"
+    - "小麦/Wheat"
 
 geocoding:
   enabled: true
@@ -228,8 +224,71 @@ geocoding:
 
 concurrency:
   classify_workers: 5
-  parse_workers: 5
-  extract_workers: 3           # LangGraph 并发论文数
+  parse_workers: 8
+  extract_workers: 3           # 并发论文数（滑动窗口）
+```
+
+### 添加新作物
+
+在 `config.yaml` 的 `extraction.crops` 列表中添加作物即可，分类 prompt 会自动引用：
+
+```yaml
+extraction:
+  crops:
+    - "水稻/Rice"
+    - "玉米/Maize"
+    - "小麦/Wheat"
+    - "大豆/Soybean"
+    - "高粱/Sorghum"
+```
+
+无需修改 prompt 模板或代码，classify 节点会动态将作物列表注入 prompt。
+
+## 数据库结构
+
+所有数据统一存储在 `output/paper_data.db`（SQLite），DBeaver/Navicat 可直接打开。
+
+### 表结构
+
+| 表 | 用途 | 交接 |
+|---|---|---|
+| `papers` | 论文级元数据（一篇一行） | 内部 |
+| `studies` | 试验级信息（一篇多行） | 内部 |
+| `varieties` | 品种产量数据（主数据表） | 内部 |
+| `varieties_flat` | 宽表（paper+study+variety 全字段） | **交接用** |
+| `classification` | 论文分类结果 | 内部 |
+| `validation_issues` | 验证问题明细（扁平化） | 内部 |
+| `paper_status` | 论文处理状态（兼注册表） | 内部 |
+| `_schema_doc` | 字段数据字典（103 个字段中文注释） | 参考 |
+
+### 数据字典
+
+DB 内含 `_schema_doc` 表，记录所有字段的中文说明、类型、是否必填、数据来源。DBeaver 中查询：
+
+```sql
+-- 查看某张表的字段说明
+SELECT column_name, column_type, description, is_required, source
+FROM _schema_doc WHERE table_name = 'varieties' ORDER BY rowid;
+
+-- 查看所有表的字段统计
+SELECT table_name, COUNT(*) as field_count
+FROM _schema_doc GROUP BY table_name ORDER BY table_name;
+```
+
+### 交接数据
+
+给下游单位提供 `varieties_flat.csv` 宽表即可，每行包含 paper+study+variety 全部字段：
+
+```sql
+-- DBeaver 中直接导出
+SELECT * FROM varieties_flat;
+```
+
+或在代码中调用：
+
+```python
+from src.graph.output import export_delivery_csv
+export_delivery_csv(conn, Path("delivery.csv"))
 ```
 
 ## 数据模型
@@ -274,20 +333,35 @@ LLM 提取原始产量值和单位，程序自动换算为 kg/ha：
      (geo_source=paper)   (geo_source=lookup)  (geo_source=baidu)  (nominatim)  (province_fallback)
 ```
 
-## 后处理流水线
+## 性能说明
 
-提取完成后自动执行以下后处理步骤：
+单篇论文的典型耗时分布（MD 已缓存，不含 MinerU 解析）：
 
-1. **Pydantic 验证** — 数据模型校验 + 类型转换
-2. **产量换算** — yield_raw → yield_standard (kg/ha)
-3. **多站点检测** — site_name 含 "、" 的标记警告
-4. **variety_code 回填** — 同一品种名在不同 study 间的审定编号一致性
-5. **盆栽试验过滤** — 剔除盆栽、温室、单株计产等非大田试验
-6. **无产量 study 过滤** — 剔除 yield_raw_unit 为 % 或无产量数据的 study
-7. **site 信息回填** — 同一论文内只有一个地点时，回填到其他 study
-8. **规则验证** — 产量换算一致性、范围检查、增产率校验、跨 study 波动检查
-9. **地理编码** — 根据地名填充经纬度和海拔
-10. **针对性 LLM 验证**（仅 LangGraph）— 对规则标记异常的记录做 LLM 核对
+| 节点 | 耗时 | 说明 |
+|------|------|------|
+| classify | ~5s | 1 次 LLM 调用 |
+| filter | <1ms | 纯代码 |
+| parse | <1s | 读 MD + 构建文档树 |
+| extract_phase1 | 30-90s | 1 次 LLM 调用（max_tokens=8192） |
+| **extract_phase2** | **N × 30-90s** | **每个试验章节 1 次 LLM 调用** |
+| postprocess | <1s | Pydantic + 后处理 |
+| geocode | <5s | 查找表 + API |
+| validate | <1s | 规则检查 |
+
+**瓶颈是 extract_phase2**：N 个试验章节 = N 次大 LLM 调用。3 个试验的论文约需 3-5 分钟。
+
+日志中每个节点的执行耗时会自动记录（超过 1 秒的显示 INFO 级别）。
+
+可通过 DBeaver 查询 `paper_status` 表分析批量运行性能：
+
+```sql
+-- 各状态论文数
+SELECT status, COUNT(*) FROM paper_status GROUP BY status;
+
+-- 耗时最长的论文
+SELECT paper_id, title, duration_sec, status FROM paper_status
+ORDER BY duration_sec DESC LIMIT 20;
+```
 
 ## 论文分类标准
 
@@ -297,18 +371,17 @@ LLM 提取原始产量值和单位，程序自动换算为 kg/ha：
 | `management_yield` | 管理/环境型产量 — 核心关注栽培措施 | 是 |
 | `remote_sensing_yield` | 遥感/区域宏观产量 | 否 |
 | `mechanistic_yield` | 机制型产量 — 分子/生理机制 | 否 |
-| `irrelevant` | 无关 — 非产量研究 | 否 |
+| `irrelevant` | 无关 — 非目标作物产量研究 | 否 |
 
 ## Prompt 调优
 
-Prompt 模板在 `src/prompts/` 下，修改后无需改代码：
+Prompt 模板在 `src/prompts/` 下，修改后清除 checkpoint 重新运行即可：
 
 | 文件 | 用途 | 修改后操作 |
 |------|------|-----------|
-| `classify.txt` | 论文分类 | 清除 `cache/classification_results.json` |
-| `extract_paper.txt` | Phase 1 提取 | 清除 `cache/extraction_results.json` |
-| `extract_study.txt` | Phase 2 提取 | 清除 `cache/extraction_results.json` |
-| `extract.txt` | Legacy 提取 | 清除 `cache/extraction_results.json` |
+| `classify.txt` | 论文分类 | `del cache\langgraph_checkpoint.db` |
+| `extract_paper.txt` | Phase 1 提取 | `del cache\langgraph_checkpoint.db` |
+| `extract_study.txt` | Phase 2 提取 | `del cache\langgraph_checkpoint.db` |
 
 ## License
 

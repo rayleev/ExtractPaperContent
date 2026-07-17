@@ -48,6 +48,7 @@ class ExtractionConfig:
     extractable_categories: list = field(
         default_factory=lambda: ["varietal_yield", "management_yield"])
     confidence_threshold: float = 0.5
+    crops: list = field(default_factory=lambda: ["rice"])
 
 
 @dataclass
@@ -121,12 +122,17 @@ class AppConfig:
         return self._run_path / "results" / "extraction"
 
     @property
-    def confidence_path(self) -> Path:
-        return self._run_path / "results" / "confidence"
+    def validation_path(self) -> Path:
+        return self._run_path / "results" / "validation"
 
     @property
     def statistics_path(self) -> Path:
         return self._run_path / "results" / "statistics"
+
+    @property
+    def db_path(self) -> Path:
+        """SQLite 输出数据库路径（固定位置，跨运行共享）"""
+        return self.base_dir / "output" / "paper_data.db"
 
 
 def load_config(config_path: Path | None = None) -> AppConfig:
@@ -169,6 +175,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         extractable_categories=ext_raw.get("extractable_categories",
                                            ["varietal_yield", "management_yield"]),
         confidence_threshold=ext_raw.get("confidence_threshold", 0.5),
+        crops=ext_raw.get("crops", ["rice"]),
     )
 
     geo_raw = raw.get("geocoding", {})

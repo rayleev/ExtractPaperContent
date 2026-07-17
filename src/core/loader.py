@@ -84,10 +84,15 @@ def discover_papers(config: AppConfig) -> List[dict]:
 
         papers.append(paper)
 
-    # 4. 分配系统 paper_id
-    date_prefix = datetime.now().strftime("%Y%m%d%H%M%S")
-    for i, paper in enumerate(papers, start=1):
-        paper["paper_id"] = f"P{date_prefix}_{i:03d}"
+    # 4. 分配稳定 paper_id（基于标题 MD5 指纹，跨运行不变）
+    import hashlib
+    import re
+    for paper in papers:
+        title = paper.get("title", "") or paper.get("pdf_name", "")
+        # 归一化：去空格、转小写，确保同一标题生成相同指纹
+        normalized = re.sub(r'\s+', '', title).lower()
+        fingerprint = hashlib.md5(normalized.encode("utf-8")).hexdigest()[:10]
+        paper["paper_id"] = f"P_{fingerprint}"
 
     md_count = sum(1 for p in papers if p.get("md_path"))
     pdf_only = sum(1 for p in papers if p.get("pdf_path") and not p.get("md_path"))

@@ -41,6 +41,8 @@ extraction:
     - "varietal_yield"
     - "management_yield"
   confidence_threshold: 0.5
+  # 允许提取的作物类型
+  crops: ["rice"]
 
 # 地理编码
 geocoding:
