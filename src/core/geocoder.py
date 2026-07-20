@@ -4,8 +4,14 @@
 
 策略（按优先级）：
   1. 内置中国农科院/省级农科院/农大查找表（覆盖主要农业试验点）
-  2. OSM Nominatim 在线地理编码（免费、无需 API Key）
-  3. 省会城市中心坐标兜底（确保有值可用）
+  2. 天地图地理编码（国内服务，中文解析质量高，推荐）
+  3. 百度地图 API（需 baidu_api_key，可选）
+  4. 省会城市中心坐标兜底（确保有值可用）
+
+海拔补充（优先级）：
+  - geocode 结果中的海拔
+  - Open-Meteo Elevation API（SRTM 数据，精度约 90m，无需 Key）
+  - 省会城市海拔近似值
 
 用法:
   from src.core.geocoder import Geocoder
@@ -32,7 +38,7 @@ class GeoResult:
     latitude: float
     longitude: float
     altitude: Optional[float] = None
-    source: str = ""  # "lookup" | "nominatim" | "province_fallback"
+    source: str = ""  # "lookup" | "tianditu" | "baidu" | "province_fallback"
     matched_name: str = ""
 
     def to_dict(self) -> dict:
@@ -136,13 +142,15 @@ class Geocoder:
         self._cache: dict = {}
         self._cache_file: Optional[Path] = None
         self._enabled = True
-        self._use_nominatim = True
 
         if config:
             geo_cfg = getattr(config, "geocoding", None)
             if geo_cfg:
                 self._enabled = getattr(geo_cfg, "enabled", True)
-                self._use_nominatim = getattr(geo_cfg, "use_nominatim", True)
+                # 天地图配置
+                self._use_tianditu = getattr(geo_cfg, "use_tianditu", True)
+                self._tianditu_tk = getattr(geo_cfg, "tianditu_tk", "")
+                self._tianditu_delay = getattr(geo_cfg, "tianditu_delay", 0.2)
             if self._enabled:
                 self._cache_file = config.cache_path / "geocoding_cache.json"
                 self._load_cache()
@@ -174,13 +182,13 @@ class Geocoder:
         # 策略 1: 内置科研机构查找表
         result = self._lookup_table(region, site_name)
 
-        # 策略 2: 百度地图 API
+        # 策略 2: 天地图地理编码（国内服务，中文解析质量高，推荐）
+        if result is None:
+            result = self._tianditu_geocode(region, site_name)
+
+        # 策略 3: 百度地图 API
         if result is None:
             result = self._baidu_geocode(region, site_name)
-
-        # 策略 3: Nominatim 在线查询
-        if result is None:
-            result = self._nominatim_geocode(region, site_name)
 
         # 策略 4: 省会城市中心坐标兜底
         if result is None:
@@ -221,7 +229,122 @@ class Geocoder:
             )
         return None
 
-    # ── 策略 2: 百度地图 ─────────────────────────────────
+    # ── 策略 2: 天地图地理编码 ─────────────────────────────
+
+    def _tianditu_geocode(self, region: str, site_name: str) -> Optional[GeoResult]:
+        """使用天地图地理编码接口（已验证：status='0', location.lon/lat/level）。"""
+        if not self._use_tianditu:
+            return None
+        if not self._tianditu_tk:
+            return None
+
+        try:
+            import httpx
+        except ImportError:
+            return None
+
+        queries = _build_tianditu_queries(region, site_name)
+
+        for query in queries:
+            ds = json.dumps({
+                "keyWord": query,
+                "level": "10",
+                "mapBound": "",
+                "queryType": "1",
+                "start": "0",
+                "count": "1",
+            }, ensure_ascii=False)
+
+            try:
+                resp = httpx.get(
+                    "https://api.tianditu.gov.cn/geocoder",
+                    params={"ds": ds, "tk": self._tianditu_tk},
+                    timeout=8,
+                )
+                time.sleep(self._tianditu_delay)
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    logger.info(f"    [TIANDITU_RAW] query='{query}' → {json.dumps(data, ensure_ascii=False)[:500]}")
+
+                    status = data.get("status")
+                    if str(status) != "0":
+                        continue
+
+                    location = data.get("location", {})
+                    lon = location.get("lon")
+                    lat = location.get("lat")
+                    if lon is None or lat is None:
+                        continue
+
+                    lon_f = float(lon)
+                    lat_f = float(lat)
+                    level = location.get("level", "")
+                    logger.info(f"    Tianditu: '{query}' → ({lat_f:.4f}, {lon_f:.4f}) level={level}")
+
+                    return GeoResult(
+                        latitude=lat_f,
+                        longitude=lon_f,
+                        altitude=None,          # 地理编码接口不返回海拔，由 _tianditu_altitude 补充
+                        source="tianditu",
+                        matched_name=query,
+                    )
+            except Exception as e:
+                logger.warning(f"    Tianditu geocode error for '{query}': {e}")
+                continue
+
+        return None
+
+    def _free_altitude(self, lat: float, lon: float) -> Optional[float]:
+        """使用 Open-Meteo Elevation API 查询海拔（已验证：返回 {"elevation": [数值]}）。"""
+        try:
+            import httpx
+        except ImportError:
+            return None
+
+        # 指数退避重试：最多 3 次，初始间隔 1s
+        max_retries = 3
+        base_delay = 1.0
+        timeout = 20.0
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = httpx.get(
+                    "https://api.open-meteo.com/v1/elevation",
+                    params={"latitude": lat, "longitude": lon},
+                    timeout=timeout,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    logger.info(f"    [ALT_RAW] lat={lat},lon={lon} → {json.dumps(data, ensure_ascii=False)[:500]}")
+
+                    elevation = data.get("elevation")
+                    if isinstance(elevation, list) and len(elevation) > 0:
+                        alt_f = float(elevation[0])
+                        logger.info(f"    Open-Meteo altitude: ({lat:.4f},{lon:.4f}) → {alt_f:.1f}m")
+                        return alt_f
+                    if isinstance(elevation, (int, float)):
+                        alt_f = float(elevation)
+                        logger.info(f"    Open-Meteo altitude: ({lat:.4f},{lon:.4f}) → {alt_f:.1f}m")
+                        return alt_f
+                    # 字段缺失或格式不符，不重试，直接走兜底
+                    logger.warning(f"    Open-Meteo altitude: unexpected response format for ({lat},{lon})")
+                    return None
+
+                # 非 200，记录后重试
+                logger.warning(f"    Open-Meteo altitude attempt {attempt}/{max_retries} failed: HTTP {resp.status_code} for ({lat},{lon})")
+
+            except Exception as e:
+                logger.warning(f"    Open-Meteo altitude attempt {attempt}/{max_retries} error for ({lat},{lon}): {e}")
+
+            # 最后一次不重试
+            if attempt < max_retries:
+                delay = base_delay * (2 ** (attempt - 1))
+                time.sleep(delay)
+
+        return None
+
+    # ── 策略 3: 百度地图 ─────────────────────────────────
 
     def _baidu_geocode(self, region: str, site_name: str) -> Optional[GeoResult]:
         """使用百度地图地理编码 API。需要 API Key。"""
@@ -275,60 +398,6 @@ class Geocoder:
 
         return None
 
-    # ── 策略 3: Nominatim ────────────────────────────────
-
-    def _nominatim_geocode(self, region: str, site_name: str) -> Optional[GeoResult]:
-        """使用 OSM Nominatim 免费地理编码 API。"""
-        if not self._use_nominatim:
-            return None
-
-        try:
-            import httpx
-        except ImportError:
-            logger.warning("    httpx not available, skipping Nominatim geocoding")
-            return None
-
-        queries = _build_queries(region, site_name)
-
-        for query in queries:
-            try:
-                resp = httpx.get(
-                    "https://nominatim.openstreetmap.org/search",
-                    params={
-                        "q": query,
-                        "format": "jsonv2",
-                        "limit": 1,
-                        "countrycodes": "cn",
-                    },
-                    headers={"User-Agent": "PaperExtractor/1.0 (research)"},
-                    timeout=8,
-                )
-                time.sleep(1.1)  # Nominatim: 1 req/s rate limit
-
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data and isinstance(data, list) and len(data) > 0:
-                        item = data[0]
-                        lat = float(item["lat"])
-                        lon = float(item["lon"])
-                        alt = _extract_altitude(item)
-                        display = item.get("display_name", "")
-                        logger.info(
-                            f"    Nominatim: {query} → ({lat:.4f}, {lon:.4f})"
-                        )
-                        return GeoResult(
-                            latitude=lat,
-                            longitude=lon,
-                            altitude=alt,
-                            source="nominatim",
-                            matched_name=display[:80],
-                        )
-            except Exception as e:
-                logger.warning(f"    Nominatim error for '{query}': {e}")
-                continue
-
-        return None
-
     # ── 策略 3: 省会兜底 ─────────────────────────────────
 
     def _province_fallback(self, region: str) -> Optional[GeoResult]:
@@ -365,51 +434,22 @@ class Geocoder:
                 json.dump(self._cache, f, ensure_ascii=False, indent=2)
 
 
-# ── 工具函数 ──────────────────────────────────────────────
+# ── Pipeline 集成函数 ────────────────────────────────────
 
-def _build_queries(region: str, site_name: str) -> List[str]:
-    """构建 Nominatim 查询列表（从精确到模糊）。"""
+def _build_tianditu_queries(region: str, site_name: str) -> List[str]:
+    """构建天地图查询列表（从精确到模糊）。"""
     queries = []
-    clean_region = _clean_region(region) if region else ""
-    clean_site = (site_name or "").strip()
+    region = (region or "").strip()
+    site = (site_name or "").strip()
 
-    # 优先用短的地区名（快速匹配，避免长查询超时）
-    if clean_region:
-        queries.append(clean_region)
-    if clean_region and clean_site:
-        queries.append(f"{clean_region} {clean_site}")
-    if clean_site and clean_site != clean_region:
-        queries.append(f"中国 {clean_site}")
+    if region and site:
+        queries.append(f"{region} {site}")
+    if region:
+        queries.append(region)
+    if site and site != region:
+        queries.append(f"中国 {site}")
 
     return queries
-
-
-def _clean_region(region: str) -> str:
-    """清理行政区划名称，去掉冗余后缀。"""
-    if not region:
-        return ""
-    cleaned = region.strip()
-    for suffix in ["地区", "自治州", "自治县", "自治区"]:
-        if cleaned.endswith(suffix) and len(cleaned) > 4:
-            cleaned = cleaned[: -len(suffix)]
-    return cleaned
-
-
-def _extract_altitude(nominatim_result: dict) -> Optional[float]:
-    """尝试从 Nominatim 结果中提取海拔。"""
-    extra = nominatim_result.get("extratags", {})
-    if isinstance(extra, dict):
-        for key in ("ele", "altitude", "ele:local"):
-            val = extra.get(key)
-            if val:
-                try:
-                    return float(str(val).replace("m", "").replace(",", ".").strip())
-                except ValueError:
-                    continue
-    return None
-
-
-# ── Pipeline 集成函数 ────────────────────────────────────
 
 def _supplement_altitude_from_province(study: dict, region: str, site: str):
     """
@@ -462,9 +502,13 @@ def geocode_extractions(extractions: List[dict], geocoder: Geocoder) -> List[dic
                 study["latitude"] = result.latitude
                 study["longitude"] = result.longitude
                 study["geo_source"] = result.source
+                # 补充海拔（优先级：geocode 结果 > 免费海拔 API > 省会海拔）
                 if result.altitude is not None and study.get("altitude") is None:
                     study["altitude"] = result.altitude
-                # 补充海拔：如果 geocoding 成功但海拔为空，从省份查找表补充
+                if study.get("altitude") is None:
+                    alt = geocoder._free_altitude(result.latitude, result.longitude)
+                    if alt is not None:
+                        study["altitude"] = alt
                 if study.get("altitude") is None:
                     _supplement_altitude_from_province(study, region, site)
                 geocoded += 1
@@ -481,3 +525,44 @@ def geocode_extractions(extractions: List[dict], geocoder: Geocoder) -> List[dic
         f"(total {total_studies} studies)"
     )
     return extractions
+
+if __name__ == "__main__":
+    import sys
+
+    # 快速自测：验证天地图地理编码 + Open-Meteo 海拔接口
+    # 用法: python -m src.core.geocoder [tk]
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+    from src.config import AppConfig
+    config = AppConfig()
+
+    tk = sys.argv[1] if len(sys.argv) > 1 else ""
+    if not tk:
+        import yaml
+        cfg_path = Path("config.yaml")
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+            tk = (raw.get("geocoding", {}) or {}).get("tianditu_tk", "")
+    if tk:
+        config.geocoding.tianditu_tk = tk
+    else:
+        print("[WARN] 未提供天地图 tk，跳过天地图地理编码测试")
+
+    geocoder = Geocoder(config)
+
+    print("\n=== 测试 Open-Meteo 海拔 ===")
+    alt = geocoder._free_altitude(45.32073, 127.3898)
+    print(f"Open-Meteo 海拔(45.32073, 127.3898) = {alt}")
+
+    print("\n=== 测试天地图地理编码 ===")
+    result = geocoder.geocode("海南省三亚市", "崖州湾国家实验室1号试验田")
+    if result:
+        print(f"天地图地理编码: lat={result.latitude}, lon={result.longitude}, source={result.source}")
+    else:
+        print("天地图地理编码: 失败")
+
+    print("\n=== 测试完整流程 ===")
+    study = {"site_administrative_region": "浙江省杭州市", "experimental_site_name": "西湖区"}
+    geocode_extractions([{"extraction": {"studies": [study]}}], geocoder)
+    print(f"完整流程: lat={study.get('latitude')}, lon={study.get('longitude')}, alt={study.get('altitude')}, source={study.get('geo_source')}")

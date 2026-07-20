@@ -1,12 +1,17 @@
 """
 地理编码节点 — 填充经纬度和海拔。
 
-策略（5 级优先）：
+策略（4 级优先）：
   1. 论文中明确写出的经纬度（geo_source=paper）
   2. 内置机构查找表（geo_source=lookup）
-  3. 百度地图 API（geo_source=baidu）
-  4. Nominatim/OpenStreetMap（geo_source=nominatim）
+  3. 天地图地理编码（geo_source=tianditu）
+  4. 百度地图 API（geo_source=baidu，可选）
   5. 省会兜底（geo_source=province_fallback）
+
+海拔补充（优先级）：
+  - geocode 结果中的海拔
+  - Open-Meteo Elevation API（SRTM 数据，精度约 90m，无需 Key）
+  - 省会海拔近似值
 """
 
 from __future__ import annotations
@@ -50,9 +55,13 @@ def geocode_node(state: PaperState, config: AppConfig, geocoder: Geocoder) -> di
             study["latitude"] = result.latitude
             study["longitude"] = result.longitude
             study["geo_source"] = result.source
-            # 补充海拔（优先用 geocode 结果，否则用省会兜底）
+            # 补充海拔（优先级：geocode 结果 > 免费海拔 API > 省会海拔）
             if result.altitude is not None and study.get("altitude") is None:
                 study["altitude"] = result.altitude
+            if study.get("altitude") is None:
+                alt = geocoder._free_altitude(result.latitude, result.longitude)
+                if alt is not None:
+                    study["altitude"] = alt
             if study.get("altitude") is None:
                 _supplement_altitude_from_province(study, region, site)
             geocoded_count += 1

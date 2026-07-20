@@ -47,8 +47,10 @@ extraction:
 # 地理编码
 geocoding:
   enabled: true
-  use_nominatim: true
-  nominatim_delay: 1.1
+  use_tianditu: true            # 是否启用天地图（国内服务，推荐）
+  tianditu_tk: ""               # 天地图 API Key（tk），空则跳过天地图
+  tianditu_delay: 0.2           # 天地图请求间隔（秒），免费 key 建议 ≥0.1
+  # baidu_api_key: ""           # 百度地图 API Key（可选，空则跳过百度）
 
 # 并发控制
 concurrency:

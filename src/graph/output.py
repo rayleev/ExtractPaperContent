@@ -266,7 +266,7 @@ _SCHEMA_DOCS = [
     ("studies", "latitude", "REAL", "纬度（仅论文明确写出时）", 0, "LLM/地理编码"),
     ("studies", "longitude", "REAL", "经度（仅论文明确写出时）", 0, "LLM/地理编码"),
     ("studies", "altitude", "REAL", "海拔/米（仅论文明确写出时）", 0, "LLM/地理编码"),
-    ("studies", "geo_source", "TEXT", "坐标来源: paper/lookup/baidu/nominatim/province_fallback", 0, "系统标注"),
+    ("studies", "geo_source", "TEXT", "坐标来源: paper/lookup/tianditu/baidu/province_fallback", 0, "系统标注"),
     ("studies", "replication_number", "INTEGER", "田间试验重复次数", 0, "LLM提取"),
     ("studies", "plot_size", "TEXT", "小区面积，如'13.3 m²'", 0, "LLM提取"),
     ("studies", "planting_density", "TEXT", "种植密度，如'22.5万穴/公顷'", 0, "LLM提取"),

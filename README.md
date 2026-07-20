@@ -35,7 +35,7 @@
 └──────┬───────┘  ──→ [后处理失败] → END
        ▼
 ┌──────────────┐
-│  geocode      │  地理编码（查找表 → 百度 → Nominatim → 省会兜底）
+│  geocode      │  地理编码（查找表 → 天地图 → 百度 → 省会兜底）
 └──────┬───────┘
        ▼
 ┌──────────────┐
@@ -143,7 +143,7 @@ pip install -r requirements.txt
 | MinerU | PDF → Markdown 解析 | `config.yaml` → `mineru` | 是 |
 | LLM API (OpenAI 兼容) | 分类 + 提取 | `config.yaml` → `llm` | 是 |
 | 百度地图 API | 地理编码（经纬度） | `config.yaml` → `geocoding.baidu_api_key` | 否 |
-| Nominatim (OpenStreetMap) | 地理编码备选 | 自动调用，免费 | 否 |
+| 天地图 API | 地理编码（经纬度，推荐） | `config.yaml` → `geocoding.tianditu_tk` | 是 |
 
 ## 使用方法
 
@@ -219,8 +219,9 @@ extraction:
 
 geocoding:
   enabled: true
-  use_nominatim: false
-  baidu_api_key: "your-key"    # 百度地图 API Key
+  use_tianditu: true
+  tianditu_tk: "your-key"       # 天地图 API Key（推荐）
+  # baidu_api_key: "your-key"   # 百度地图 API Key（可选）
 
 concurrency:
   classify_workers: 5
@@ -326,12 +327,14 @@ LLM 提取原始产量值和单位，程序自动换算为 kg/ha：
 | 斤/亩 | × 7.5 | 800 → 6000.0 |
 | g/株, kg/plot | 不可换算 → None | 需要额外信息 |
 
-### 地理编码策略（5 级优先）
+### 地理编码策略（4 级优先）
 
 ```
-论文中明确写出的经纬度 → 内置机构查找表 → 百度地图 API → Nominatim → 省会兜底
-     (geo_source=paper)   (geo_source=lookup)  (geo_source=baidu)  (nominatim)  (province_fallback)
+论文中明确写出的经纬度 → 内置机构查找表 → 天地图 API → 百度地图 API → 省会兜底
+     (geo_source=paper)   (geo_source=lookup)  (geo_source=tianditu)  (geo_source=baidu)  (province_fallback)
 ```
+
+**海拔补充**：geocode 结果 → Open-Meteo Elevation API（SRTM，精度约 90m，无需 Key） → 省会海拔近似值
 
 ## 性能说明
 

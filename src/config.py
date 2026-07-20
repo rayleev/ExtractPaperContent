@@ -54,9 +54,11 @@ class ExtractionConfig:
 @dataclass
 class GeocodingConfig:
     enabled: bool = True
-    use_nominatim: bool = True
-    nominatim_delay: float = 1.1  # Nominatim rate limit (seconds)
-    baidu_api_key: str = ""       # 百度地图 API Key（空则跳过百度）
+    baidu_api_key: str = ""             # 百度地图 API Key（空则跳过百度）
+    # ── 天地图（国内服务，中文解析质量与稳定性高，推荐）──
+    use_tianditu: bool = True           # 是否启用天地图（默认启用，推荐）
+    tianditu_tk: str = ""               # 天地图 API Key（tk），空则跳过天地图
+    tianditu_delay: float = 0.2         # 天地图请求间隔（秒），免费 key 建议 ≥0.1
 
 
 @dataclass
@@ -181,9 +183,10 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     geo_raw = raw.get("geocoding", {})
     geocoding = GeocodingConfig(
         enabled=geo_raw.get("enabled", True),
-        use_nominatim=geo_raw.get("use_nominatim", True),
-        nominatim_delay=geo_raw.get("nominatim_delay", 1.1),
         baidu_api_key=geo_raw.get("baidu_api_key", ""),
+        use_tianditu=geo_raw.get("use_tianditu", True),
+        tianditu_tk=geo_raw.get("tianditu_tk", ""),
+        tianditu_delay=geo_raw.get("tianditu_delay", 0.2),
     )
 
     conc_raw = raw.get("concurrency", {})
