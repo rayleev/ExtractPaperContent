@@ -142,6 +142,10 @@ class Geocoder:
         self._cache: dict = {}
         self._cache_file: Optional[Path] = None
         self._enabled = True
+        # 默认服务地址（config 未提供时使用）
+        self._tianditu_url = "https://api.tianditu.gov.cn/geocoder"
+        self._baidu_url = "https://api.map.baidu.com/geocoding/v3/"
+        self._elevation_url = "https://api.open-meteo.com/v1/elevation"
 
         if config:
             geo_cfg = getattr(config, "geocoding", None)
@@ -151,6 +155,10 @@ class Geocoder:
                 self._use_tianditu = getattr(geo_cfg, "use_tianditu", True)
                 self._tianditu_tk = getattr(geo_cfg, "tianditu_tk", "")
                 self._tianditu_delay = getattr(geo_cfg, "tianditu_delay", 0.2)
+                # 服务地址（从配置读取，支持覆盖）
+                self._tianditu_url = getattr(geo_cfg, "tianditu_url", "https://api.tianditu.gov.cn/geocoder")
+                self._baidu_url = getattr(geo_cfg, "baidu_url", "https://api.map.baidu.com/geocoding/v3/")
+                self._elevation_url = getattr(geo_cfg, "elevation_url", "https://api.open-meteo.com/v1/elevation")
             if self._enabled:
                 self._cache_file = config.cache_path / "geocoding_cache.json"
                 self._load_cache()
@@ -257,7 +265,7 @@ class Geocoder:
 
             try:
                 resp = httpx.get(
-                    "https://api.tianditu.gov.cn/geocoder",
+                    self._tianditu_url,
                     params={"ds": ds, "tk": self._tianditu_tk},
                     timeout=8,
                 )
@@ -310,7 +318,7 @@ class Geocoder:
         for attempt in range(1, max_retries + 1):
             try:
                 resp = httpx.get(
-                    "https://api.open-meteo.com/v1/elevation",
+                    self._elevation_url,
                     params={"latitude": lat, "longitude": lon},
                     timeout=timeout,
                 )
@@ -367,7 +375,7 @@ class Geocoder:
 
         try:
             resp = httpx.get(
-                "https://api.map.baidu.com/geocoding/v3/",
+                self._baidu_url,
                 params={
                     "address": address,
                     "output": "json",

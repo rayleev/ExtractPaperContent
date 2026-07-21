@@ -60,10 +60,9 @@ def main():
     )
     parser.add_argument(
         "--step",
-        choices=["classify", "parse", "extract", "all"],
+        choices=["search", "classify", "download", "parse", "extract", "all"],
         default="all",
-        help="Pipeline step to run: classify (仅分类), parse (分类+解析), "
-             "extract/all (完整流程，默认)",
+        help="Pipeline step to run: search/classify/download/parse/extract/all",
     )
     parser.add_argument(
         "--paper",
@@ -77,12 +76,46 @@ def main():
         default=None,
         help="Path to config.yaml (default: auto-detect)",
     )
+    parser.add_argument(
+        "--serve",
+        action="store_true",
+        default=False,
+        help="Start HTTP API server (FastAPI + uvicorn)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="HTTP server port (default: 8000, used with --serve)",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="HTTP server host (default: 0.0.0.0, used with --serve)",
+    )
     args = parser.parse_args()
+
+    # ── HTTP 服务模式 ──
+    if args.serve:
+        import uvicorn
+        print(f"Starting Paper Extractor API server on {args.host}:{args.port}")
+        print(f"Swagger UI: http://localhost:{args.port}/docs")
+        uvicorn.run(
+            "src.api.main:app",
+            host=args.host,
+            port=args.port,
+            reload=False,
+            log_level="info",
+        )
+        return
 
     # 将 --step 映射为 graph 的 stop_after 节点名
     # classify → 分类后停止, parse → 解析后停止, extract/all → 完整流程
     step_to_stop = {
+        "search": "search",
         "classify": "classify",
+        "download": "download",
         "parse": "parse",
         "extract": "",   # 完整流程
         "all": "",       # 完整流程

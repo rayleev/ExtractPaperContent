@@ -1,20 +1,25 @@
 # ============================================================
 #  paper_extractor 配置文件（示例）
 #  复制为 config.yaml 并填入实际值
+#
+#  敏感值（API Key、密码）支持环境变量覆盖：
+#    LLM_API_KEY, MINERU_API_KEY, SS_API_KEY, DB_PASSWORD
+#    TIANDITU_TK, BAIDU_API_KEY
+#  环境变量优先级高于 config.yaml
 # ============================================================
 
 # 路径配置
 paths:
-  base_dir: "D:\\workspace\\local_project\\extract4paperQC"
-  papers_dir: "docs"                       # 论文数据目录（PDF/MD 直接放此目录下）
-  cache_dir: "cache"                       # 运行缓存（共享，支持断点续跑）
-  parsed_dir: "output/parsed"              # MinerU 解析后的 markdown（共享）
-  runs_dir: "output/runs"                  # 每次运行的输出目录: runs/{时间戳}/
+  base_dir: "."                    # 项目根目录（Docker 中为 /app）
+  papers_dir: "docs"               # 论文数据目录（PDF/MD 直接放此目录下）
+  cache_dir: "cache"               # 运行缓存（共享，支持断点续跑）
+  parsed_dir: "output/parsed"      # MinerU 解析后的 markdown（共享）
+  runs_dir: "output/runs"          # 每次运行的输出目录: runs/{时间戳}/
 
-# MinerU PDF 解析服务
+# MinerU PDF 解析服务（必填）
 mineru:
   base_url: "http://YOUR_MINERU_HOST"
-  api_key: "YOUR_API_KEY"
+  api_key: ""                      # 或通过环境变量 MINERU_API_KEY 设置
   lang_list: ["ch", "en"]
   poll_interval: 5
   poll_timeout: 600
@@ -23,40 +28,66 @@ mineru:
   return_middle_json: false
   formula_enable: true
   table_enable: true
-  parse_method: "ocr"    # auto / txt / ocr
+  parse_method: "ocr"              # auto / txt / ocr
 
-# LLM 服务
+# LLM 服务（必填）
 llm:
   base_url: "http://YOUR_LLM_HOST/v1"
-  api_key: "YOUR_API_KEY"
+  api_key: ""                      # 或通过环境变量 LLM_API_KEY 设置
   model: "DSv4-flash"
   max_tokens: 8192
   temperature: 0.1
-  max_retries: 3
+  max_retries: 5
+  timeout: 600                     # 请求超时时间（秒）
 
 # 提取参数
 extraction:
-  max_text_chars: 80000
+  max_text_chars: 120000
   extractable_categories:
     - "varietal_yield"
     - "management_yield"
   confidence_threshold: 0.5
-  # 允许提取的作物类型
-  crops: ["rice"]
+  crops:                           # 目标作物列表
+    - "水稻/Rice"
+  search_keywords:                 # 搜索关键词列表
+    - "水稻产量"
+    - "rice yield"
+  search_year_range: ""            # 年份范围过滤，如 "2020-2025"，空则不限
 
 # 地理编码
 geocoding:
   enabled: true
-  use_tianditu: true            # 是否启用天地图（国内服务，推荐）
-  tianditu_tk: ""               # 天地图 API Key（tk），空则跳过天地图
-  tianditu_delay: 0.2           # 天地图请求间隔（秒），免费 key 建议 ≥0.1
-  # baidu_api_key: ""           # 百度地图 API Key（可选，空则跳过百度）
+  use_tianditu: true               # 是否启用天地图（国内服务，推荐）
+  tianditu_tk: ""                  # 或通过环境变量 TIANDITU_TK 设置
+  tianditu_delay: 0.2              # 天地图请求间隔（秒）
+  baidu_api_key: ""                # 或通过环境变量 BAIDU_API_KEY 设置
+  # 地理编码服务地址（可选覆盖，默认使用公共服务）
+  # tianditu_url: "https://api.tianditu.gov.cn/geocoder"
+  # baidu_url: "https://api.map.baidu.com/geocoding/v3/"
+  # elevation_url: "https://api.open-meteo.com/v1/elevation"
 
 # 并发控制
 concurrency:
   classify_workers: 5
-  parse_workers: 5
-  extract_workers: 5
+  parse_workers: 8
+  extract_workers: 3               # LLM 并发论文数
+
+# PostgreSQL 数据库（必填）
+database:
+  host: ""                         # 或通过环境变量 DB_HOST 设置
+  port: 5432
+  dbname: "paper_extractor"
+  user: "postgres"
+  password: ""                     # 或通过环境变量 DB_PASSWORD 设置
+
+# Semantic Scholar 代理 API（论文搜索 + PDF 下载）
+# 与 MinerU 共用同一服务和 API Key，无需单独配置
+# 如需覆盖，可取消注释并显式设置：
+# semantic_scholar:
+#   base_url: "http://other_host"
+#   api_key: "other_key"
+#   max_retries: 5
+#   request_interval: 0.3
 
 # 日志配置
 logging:

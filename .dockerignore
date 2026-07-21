@@ -1,0 +1,35 @@
+# 版本控制
+.git
+.gitignore
+
+# Python 缓存
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.venv
+venv
+
+# IDE
+.idea
+.vscode
+*.swp
+
+# 数据和输出（不打包到镜像中，通过 volumes 挂载）
+docs/PDF/*
+docs/meta/*
+output/*
+cache/*
+
+# 文档
+README.md
+docs/*.md
+
+# Docker 自身
+docker-compose.yml
+.env
+.env.example
+.dockerignore
+
+# 旧数据
+output/paper_data.db

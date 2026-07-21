@@ -3,14 +3,16 @@ BatchOrchestrator — 管理大规模论文批量处理。
 
 功能：
   - 多论文并发处理（ThreadPoolExecutor）
-  - SQLite checkpoint 断点续跑
-  - 逐篇写入 SQLite 输出数据库（实时持久化）
+  - SQLite checkpoint 断点续跑（LangGraph 内部，独立于输出库）
+  - 逐篇写入 PostgreSQL 输出数据库（实时持久化）
   - 批次完成后生成验证报告 + 覆盖率统计 + CSV 导出
   - 步骤级注册表，支持分步执行和自动补全
+  - 多实例支持（通过 INSTANCE_ID 环境变量标识）
 """
 
 from __future__ import annotations
 import logging
+import os
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +30,8 @@ from src.graph.output import (
     insert_extraction,
     insert_classification,
     insert_validation,
+    insert_pdf_missing,
+    claim_tasks,
     export_table_csv,
     export_delivery_csv,
     get_table_stats,
@@ -66,9 +70,12 @@ class BatchOrchestrator:
         self.output_dir = config.extraction_path
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # SQLite 输出数据库（所有结果统一存储，含注册表功能）
+        # PostgreSQL 输出数据库（所有结果统一存储，含注册表功能）
         self._db_lock = threading.Lock()
-        self.db_conn = init_database(config.db_path)
+        self.db_conn = init_database(config.database.connection_string)
+
+        # 多实例标识（用于任务领取 claim_tasks）
+        self.instance_id = os.environ.get("INSTANCE_ID", "default")
 
         # 统计
         self.stats = {
@@ -169,7 +176,7 @@ class BatchOrchestrator:
                         self.stats["completed"] += 1
                         self._completed_results.append(result)
 
-                        # 提取结果写入 SQLite（仅完整提取流程）
+                        # 提取结果写入 PostgreSQL（仅完整提取流程）
                         if target_step == "extract":
                             with self._db_lock:
                                 insert_extraction(self.db_conn, result, pid)
@@ -268,7 +275,10 @@ class BatchOrchestrator:
         from src.output.statistics import generate_statistics
         generate_statistics(self._completed_results, self.config.statistics_path)
 
-        logger.info(f"Output DB: {self.config.db_path}")
+        logger.info(
+            f"Output DB: {self.config.database.host}:{self.config.database.port}"
+            f"/{self.config.database.dbname}"
+        )
 
     def _process_one_paper(
         self,
@@ -349,7 +359,7 @@ class BatchOrchestrator:
             f"{self.stats['skipped']} skip"
         )
 
-    # ── 注册表管理（基于 SQLite paper_status 表）────────────
+    # ── 注册表管理（基于 PostgreSQL paper_status 表）────────────
 
     def _load_registry_from_db(self) -> dict:
         """
@@ -358,10 +368,11 @@ class BatchOrchestrator:
         返回 {paper_id: target_step}，仅包含 status='completed' 的记录。
         """
         try:
-            cursor = self.db_conn.execute(
-                "SELECT paper_id, target_step FROM paper_status WHERE status = 'completed'"
-            )
-            registry = {row[0]: row[1] for row in cursor.fetchall()}
+            with self.db_conn.cursor() as cur:
+                cur.execute(
+                    "SELECT paper_id, target_step FROM paper_status WHERE status = 'completed'"
+                )
+                registry = {row[0]: row[1] for row in cur.fetchall()}
             logger.info(
                 f"Registry: {len(registry)} papers completed "
                 f"({sum(1 for s in registry.values() if s == 'extract')} extracted, "

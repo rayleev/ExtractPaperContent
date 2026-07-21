@@ -61,7 +61,7 @@ class LLMClient:
         for attempt in range(1, self.config.max_retries + 1):
             try:
                 resp = requests.post(
-                    url, headers=self.headers, json=payload, timeout=300
+                    url, headers=self.headers, json=payload, timeout=self.config.timeout
                 )
                 resp.raise_for_status()
                 data = resp.json()
@@ -71,7 +71,7 @@ class LLMClient:
                     f"  LLM call attempt {attempt}/{self.config.max_retries} failed: {e}"
                 )
                 if attempt < self.config.max_retries:
-                    time.sleep(3 * attempt)
+                    time.sleep(min(3 * (2 ** attempt), 60))
         return None
 
     def call_json(self, prompt: str, max_tokens: int | None = None) -> Optional[dict]:

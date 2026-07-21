@@ -17,11 +17,18 @@ class PaperState(TypedDict, total=False):
     paper_meta: dict                    # {doi, title, year, journal, pdf_path, md_path, ...}
     stop_after: str                     # 分步执行：在此节点后停止（默认 "" = 跑完整流程）
 
+    # ── search 节点（BatchOrchestrator 调用，批量搜索阶段）──
+    search_results: list                # 搜索结果（search 节点输出）
+    search_total: int                   # 搜索到的论文总数
+
     # ── classify 节点 ──
     classification: dict                # {category, language, reasoning, ...}
 
     # ── filter 节点 ──
     is_extractable: bool                # 是否通过筛选
+
+    # ── download 节点 ──
+    pdf_missing: bool                   # PDF 下载失败标记
 
     # ── parse 节点 ──
     parsed_text: str                    # MinerU 或 MD 全文

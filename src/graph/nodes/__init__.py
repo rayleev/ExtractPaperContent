@@ -1,5 +1,7 @@
 """LangGraph 节点函数 — 每个节点一个模块。"""
 
+from src.graph.nodes.search import search_node
+from src.graph.nodes.download import download_node
 from src.graph.nodes.classify import classify_node
 from src.graph.nodes.filter import filter_node
 from src.graph.nodes.parse import parse_node
@@ -10,6 +12,8 @@ from src.graph.nodes.geocode import geocode_node
 from src.graph.nodes.validate import validate_node, targeted_llm_validate_node
 
 __all__ = [
+    "search_node",
+    "download_node",
     "classify_node", "filter_node", "parse_node",
     "extract_phase1_node", "extract_phase2_node",
     "postprocess_node", "geocode_node",

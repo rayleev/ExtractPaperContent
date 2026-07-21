@@ -1,0 +1,115 @@
+# ============================================================
+#  Paper Extractor — 多实例 Docker Compose 部署
+#
+#  3 个 extractor 实例共享：
+#    - PostgreSQL 数据库（外部，地址通过 DB_HOST 配置）
+#    - PDF 存储卷（避免重复下载）
+#    - 各自的 LLM API Key（环境变量注入）
+#
+#  必需环境变量（在 .env 文件中设置）：
+#    DB_HOST, DB_PASSWORD, SS_API_KEY
+#    LLM_API_KEY_1, LLM_API_KEY_2, LLM_API_KEY_3
+#
+#  启动: docker-compose up -d
+#  日志: docker-compose logs -f
+#  停止: docker-compose down
+# ============================================================
+
+x-common-env: &common-env
+  DB_HOST: ${DB_HOST:?请在 .env 中设置 DB_HOST}
+  DB_PASSWORD: ${DB_PASSWORD:?请在 .env 中设置 DB_PASSWORD}
+  DB_PORT: ${DB_PORT:-5432}
+  MINERU_BASE_URL: ${MINERU_BASE_URL:-}
+  LLM_BASE_URL: ${LLM_BASE_URL:-}
+
+services:
+  # ── 实例 1 ──
+  extractor-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: paper-extractor:latest
+    container_name: extractor-1
+    restart: unless-stopped
+    ports:
+      - "${PORT_1:-8001}:8000"
+    environment:
+      <<: *common-env
+      INSTANCE_ID: instance_1
+      LLM_API_KEY: ${LLM_API_KEY_1:?请在 .env 中设置 LLM_API_KEY_1}
+      MINERU_API_KEY: ${MINERU_API_KEY_1:-}
+    volumes:
+      - shared_pdfs:/app/docs/PDF
+      - shared_meta:/app/docs/meta
+      - shared_parsed:/app/output/parsed
+      - shared_cache:/app/cache
+    env_file:
+      - .env
+    networks:
+      - extractor-net
+
+  # ── 实例 2 ──
+  extractor-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: paper-extractor:latest
+    container_name: extractor-2
+    restart: unless-stopped
+    ports:
+      - "${PORT_2:-8002}:8000"
+    environment:
+      <<: *common-env
+      INSTANCE_ID: instance_2
+      LLM_API_KEY: ${LLM_API_KEY_2:?请在 .env 中设置 LLM_API_KEY_2}
+      MINERU_API_KEY: ${MINERU_API_KEY_2:-}
+    volumes:
+      - shared_pdfs:/app/docs/PDF
+      - shared_meta:/app/docs/meta
+      - shared_parsed:/app/output/parsed
+      - shared_cache:/app/cache
+    env_file:
+      - .env
+    networks:
+      - extractor-net
+
+  # ── 实例 3 ──
+  extractor-3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: paper-extractor:latest
+    container_name: extractor-3
+    restart: unless-stopped
+    ports:
+      - "${PORT_3:-8003}:8000"
+    environment:
+      <<: *common-env
+      INSTANCE_ID: instance_3
+      LLM_API_KEY: ${LLM_API_KEY_3:?请在 .env 中设置 LLM_API_KEY_3}
+      MINERU_API_KEY: ${MINERU_API_KEY_3:-}
+    volumes:
+      - shared_pdfs:/app/docs/PDF
+      - shared_meta:/app/docs/meta
+      - shared_parsed:/app/output/parsed
+      - shared_cache:/app/cache
+    env_file:
+      - .env
+    networks:
+      - extractor-net
+
+# ── 共享卷 ──
+volumes:
+  shared_pdfs:
+    name: paper-extractor-pdfs
+  shared_meta:
+    name: paper-extractor-meta
+  shared_parsed:
+    name: paper-extractor-parsed
+  shared_cache:
+    name: paper-extractor-cache
+
+# ── 网络 ──
+networks:
+  extractor-net:
+    name: paper-extractor-net

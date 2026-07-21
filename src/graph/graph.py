@@ -4,12 +4,12 @@ PaperProcessingGraph — LangGraph StateGraph 定义。
 将各节点串联为有向图，支持条件路由、checkpoint、错误隔离、分步执行。
 
 Graph 流程:
-  classify → filter → [extractable?] → parse → extract_phase1 → extract_phase2
+  classify → filter → [extractable?] → download → [pdf?] → parse → extract_phase1 → extract_phase2
     → postprocess → geocode → validate → [flagged?] → targeted_llm_validate → END
 
 分步执行:
   通过 PaperState.stop_after 控制，graph 在指定节点后提前终止。
-  支持值: "classify" | "filter" | "parse" | "extract_phase1" | "extract_phase2"
+  支持值: "classify" | "filter" | "download" | "parse" | "extract_phase1" | "extract_phase2"
          | "postprocess" | "geocode" | "validate" | "" (完整流程)
 """
 
@@ -24,11 +24,13 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from src.config import AppConfig
 from src.clients.llm import LLMClient
 from src.clients.mineru import MinerUClient
+from src.clients.semantic_scholar import SemanticScholarClient
 from src.core.geocoder import Geocoder
 from src.graph.state import PaperState
 from src.graph.nodes import (
     classify_node,
     filter_node,
+    download_node,
     parse_node,
     extract_phase1_node,
     extract_phase2_node,
@@ -79,7 +81,16 @@ def _route_after_filter(state: PaperState) -> str:
         return "skip"
     if _should_stop(state, "filter"):
         return "done"
-    return "extract"
+    return "download"
+
+
+def _route_after_download(state: PaperState) -> str:
+    """download 后：PDF 不可用时提前终止，否则进入 parse。"""
+    if state.get("status") == "no_pdf":
+        return "no_pdf"
+    if _should_stop(state, "download"):
+        return "done"
+    return "parse"
 
 
 def _route_after_parse(state: PaperState) -> str:
@@ -140,6 +151,7 @@ def build_paper_graph(
     llm: LLMClient,
     mineru_client: Optional[MinerUClient],
     geocoder: Geocoder,
+    ss_client: Optional[SemanticScholarClient] = None,
     checkpoint_path: Optional[str] = None,
 ) -> StateGraph:
     """
@@ -155,6 +167,8 @@ def build_paper_graph(
         lambda s: classify_node(s, config, llm)))
     graph.add_node("filter", _timed("filter",
         lambda s: filter_node(s, config)))
+    graph.add_node("download", _timed("download",
+        lambda s: download_node(s, config, ss_client)))
     graph.add_node("parse", _timed("parse",
         lambda s: parse_node(s, config, mineru_client)))
     graph.add_node("extract_phase1", _timed("extract_phase1",
@@ -177,7 +191,10 @@ def build_paper_graph(
         {"continue": "filter", "done": END})
 
     graph.add_conditional_edges("filter", _route_after_filter,
-        {"extract": "parse", "skip": END, "done": END})
+        {"download": "download", "skip": END, "done": END})
+
+    graph.add_conditional_edges("download", _route_after_download,
+        {"parse": "parse", "no_pdf": END, "done": END})
 
     graph.add_conditional_edges("parse", _route_after_parse,
         {"continue": "extract_phase1", "fail": END, "done": END})
