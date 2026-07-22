@@ -47,10 +47,16 @@
   .health-info .name { font-weight: 600; font-size: 14px; }
   .health-info .detail { font-size: 12px; color: var(--muted); }
 
-  /* progress bar */
-  .progress-bar { height: 20px; background: #e8e4dc; border-radius: 10px; overflow: hidden; margin: 8px 0; }
-  .progress-fill { height: 100%; background: var(--accent); border-radius: 10px; transition: width 0.6s ease; display: flex; align-items: center; justify-content: center; }
-  .progress-fill span { font-size: 11px; color: #fff; font-weight: 600; }
+  /* progress bar (stacked: green=completed, blue=processing, gray=pending) */
+  .progress-bar { height: 24px; background: #e8e4dc; border-radius: 12px; overflow: hidden; margin: 8px 0; display: flex; }
+  .progress-seg { height: 100%; transition: width 0.6s ease; display: flex; align-items: center; justify-content: center; min-width: 0; }
+  .progress-seg span { font-size: 11px; color: #fff; font-weight: 600; white-space: nowrap; overflow: hidden; padding: 0 4px; }
+  .seg-completed { background: var(--accent); }
+  .seg-processing { background: var(--info); }
+  .seg-pending { background: #c9c2b4; }
+  .progress-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .progress-legend .lg { display: flex; align-items: center; gap: 5px; }
+  .progress-legend .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
   /* status badges */
   .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
@@ -122,9 +128,18 @@
   <div class="section-title">Processing Progress</div>
   <div class="grid grid-2">
     <div class="card">
-      <h3>Overall Completion</h3>
+      <h3>Processing Progress</h3>
       <div class="value" id="totalPapers">--</div>
-      <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"><span id="progressPct">0%</span></div></div>
+      <div class="progress-bar">
+        <div class="progress-seg seg-completed" id="segCompleted" style="width:0%"><span id="segCompletedLabel"></span></div>
+        <div class="progress-seg seg-processing" id="segProcessing" style="width:0%"><span id="segProcessingLabel"></span></div>
+        <div class="progress-seg seg-pending" id="segPending" style="width:0%"><span id="segPendingLabel"></span></div>
+      </div>
+      <div class="progress-legend">
+        <span class="lg"><span class="swatch" style="background:var(--accent)"></span>Completed <b id="lgCompleted">0</b></span>
+        <span class="lg"><span class="swatch" style="background:var(--info)"></span>Processing <b id="lgProcessing">0</b></span>
+        <span class="lg"><span class="swatch" style="background:#c9c2b4"></span>Pending <b id="lgPending">0</b></span>
+      </div>
       <div class="sub" id="progressSub">--</div>
     </div>
     <div class="card">
@@ -253,12 +268,37 @@ async function loadProgress() {
   try {
     const r = await fetch(BASE + '/api/progress');
     const d = await r.json();
-    document.getElementById('totalPapers').textContent = fmt(d.total);
-    const pct = d.completion_pct || 0;
-    document.getElementById('progressFill').style.width = Math.max(pct, 2) + '%';
-    document.getElementById('progressPct').textContent = pct + '%';
     const completed = d.by_status?.completed || 0;
-    document.getElementById('progressSub').textContent = `${fmt(completed)} completed / ${fmt(d.total)} total`;
+    const processing = d.by_status?.processing || 0;
+    const pending = d.by_status?.pending || 0;
+    const failed = d.by_status?.failed || 0;
+    const skipped = d.by_status?.skipped || 0;
+    const active = d.active_total || 0;
+
+    // 大数字显示活跃论文数（剔除 failed/skipped）
+    document.getElementById('totalPapers').textContent = fmt(active);
+
+    // 堆叠进度条：各段宽度按占活跃论文比例
+    const pctC = active ? completed * 100 / active : 0;
+    const pctP = active ? processing * 100 / active : 0;
+    const pctPend = active ? pending * 100 / active : 0;
+    document.getElementById('segCompleted').style.width = pctC + '%';
+    document.getElementById('segProcessing').style.width = pctP + '%';
+    document.getElementById('segPending').style.width = pctPend + '%';
+    // 段内百分比标签（段太窄时不显示）
+    document.getElementById('segCompletedLabel').textContent = pctC >= 8 ? Math.round(pctC) + '%' : '';
+    document.getElementById('segProcessingLabel').textContent = pctP >= 8 ? Math.round(pctP) + '%' : '';
+    document.getElementById('segPendingLabel').textContent = pctPend >= 8 ? Math.round(pctPend) + '%' : '';
+
+    // 图例计数
+    document.getElementById('lgCompleted').textContent = fmt(completed);
+    document.getElementById('lgProcessing').textContent = fmt(processing);
+    document.getElementById('lgPending').textContent = fmt(pending);
+
+    // 副标题：完成百分比 + 剔除说明
+    let sub = `${d.completion_pct || 0}% completed`;
+    if (failed || skipped) sub += `（已剔除 ${fmt(failed)} failed、${fmt(skipped)} skipped）`;
+    document.getElementById('progressSub').textContent = sub;
 
     // status breakdown
     const sb = document.getElementById('statusBreakdown');

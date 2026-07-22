@@ -887,12 +887,13 @@ def get_progress(conn) -> dict:
     Returns:
         {
             "total": 150000,
+            "active_total": 149000,   # pending+processing+completed（剔除 failed/skipped）
             "by_status": {"pending": 1000, "processing": 30, "completed": 140000, ...},
             "by_instance": {"instance-1": {"processing": 10, "completed": 50000}, ...},
-            "completion_pct": 93.3,
+            "completion_pct": 93.9,   # completed / active_total
         }
     """
-    result = {"total": 0, "by_status": {}, "by_instance": {}, "completion_pct": 0.0}
+    result = {"total": 0, "active_total": 0, "by_status": {}, "by_instance": {}, "completion_pct": 0.0}
 
     with conn.cursor() as cur:
         # 按状态分组统计
@@ -915,9 +916,14 @@ def get_progress(conn) -> dict:
                 result["by_instance"][instance] = {}
             result["by_instance"][instance][status] = count
 
-    # 计算完成百分比
+    # 活跃论文 = pending + processing + completed（剔除 failed/skipped，进度条口径）
     completed = result["by_status"].get("completed", 0)
-    if result["total"] > 0:
-        result["completion_pct"] = round(completed * 100.0 / result["total"], 2)
+    processing = result["by_status"].get("processing", 0)
+    pending = result["by_status"].get("pending", 0)
+    result["active_total"] = completed + processing + pending
+
+    # 完成百分比基于活跃论文（failed/skipped 不计入分母）
+    if result["active_total"] > 0:
+        result["completion_pct"] = round(completed * 100.0 / result["active_total"], 2)
 
     return result

@@ -87,7 +87,8 @@ class PaperStatusResponse(BaseModel):
 
 class ProgressResponse(BaseModel):
     """全局处理进度（按状态和实例分组）。"""
-    total: int = Field(description="论文总数")
+    total: int = Field(description="论文总数（含所有状态）")
+    active_total: int = Field(default=0, description="活跃论文数 = pending+processing+completed（剔除 failed/skipped）")
     by_status: dict = Field(
         default_factory=dict,
         description="按状态分组: {pending, processing, completed, failed, skipped}",
@@ -96,4 +97,4 @@ class ProgressResponse(BaseModel):
         default_factory=dict,
         description="按实例分组: {instance-1: {processing: N, completed: M}, ...}",
     )
-    completion_pct: float = Field(description="完成百分比")
+    completion_pct: float = Field(description="完成百分比 = completed / active_total（剔除 failed/skipped）")
