@@ -17,6 +17,7 @@
 # ============================================================
 
 x-common-env: &common-env
+  TZ: Asia/Shanghai
   DB_HOST: ${DB_HOST:?请在 .env 中设置 DB_HOST}
   DB_PASSWORD: ${DB_PASSWORD:?请在 .env 中设置 DB_PASSWORD}
   DB_PORT: ${DB_PORT:-5432}

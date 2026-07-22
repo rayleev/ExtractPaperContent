@@ -105,10 +105,16 @@ def search_node(
     seen_ids: set[str] = set()
 
     for kw in keywords:
-        logger.info(f"  搜索关键词: \"{kw}\"")
+        # limit 是总量上限：按已收集数量扣减剩余配额
+        kw_limit = (limit - len(all_papers)) if limit else None
+        if kw_limit is not None and kw_limit <= 0:
+            logger.info(f"  已达 limit={limit}，跳过剩余关键词")
+            break
+
+        logger.info(f"  搜索关键词: \"{kw}\"" + (f" (剩余配额 {kw_limit})" if kw_limit else ""))
         try:
             papers = ss_client.search_all(
-                kw, DEFAULT_SEARCH_FIELDS, year=year_param, limit=limit,
+                kw, DEFAULT_SEARCH_FIELDS, year=year_param, limit=kw_limit,
             )
         except Exception as e:
             logger.error(f"  搜索关键词 \"{kw}\" 失败: {e}")
