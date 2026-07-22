@@ -158,11 +158,7 @@ CREATE TABLE IF NOT EXISTS varieties_flat (
 -- 论文分类结果
 CREATE TABLE IF NOT EXISTS classification (
     paper_id        TEXT PRIMARY KEY,
-    doi             TEXT,
-    title           TEXT,
     language        TEXT,
-    year            TEXT,
-    journal         TEXT,
     category        TEXT,
     confidence      DOUBLE PRECISION,
     reasoning       TEXT,
@@ -252,6 +248,15 @@ def init_database(connection_string: str):
     # 执行建表（逐条执行，PG 不支持 executescript）
     # 注意：split(";") 后每条语句可能包含前导注释行，需要去除
     with conn.cursor() as cur:
+        # ── 迁移：旧版 classification 表含 title/doi/year/journal 冗余列，检测并重建 ──
+        cur.execute("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_name = 'classification' AND column_name = 'doi'
+        """)
+        if cur.fetchone():
+            cur.execute("DROP TABLE classification")
+            logger.info("Dropped legacy classification table (removed redundant doi/title/year/journal columns)")
+
         for raw_statement in _SCHEMA.strip().split(";"):
             # 去除前导注释行（-- 开头的行），保留实际 SQL
             lines = raw_statement.strip().splitlines()
@@ -275,15 +280,30 @@ def init_database(connection_string: str):
     return conn
 
 
+# ── 表级注释 ──────────────────────────────────────────────
+
+_TABLE_COMMENTS = {
+    "papers": "论文级数据（一篇一行），doi/title/year/journal 来自搜索元数据",
+    "studies": "试验级数据（一篇论文多行），一年×一站 = 一个试验",
+    "varieties": "品种产量数据（主数据表），一行 = 一个品种×一个试验",
+    "varieties_flat": "品种产量宽表（扁平化交接用），每行含 paper+study+variety 全部字段",
+    "classification": "论文分类结果（5类），paper_id FK → paper_status",
+    "validation_issues": "验证问题明细（扁平化），issue=严重/warning=警告",
+    "paper_status": "论文处理状态（兼任务协调注册表+搜索元数据存储）",
+    "pdf_missing": "无法获取 PDF 的论文记录",
+    "_schema_doc": "字段文档表（数据字典），自动维护",
+}
+
+
 # ── 字段文档 ──────────────────────────────────────────────
 
 _SCHEMA_DOCS = [
     # ── papers 表 ──
     ("papers", "paper_id", "TEXT", "论文唯一标识（P_ + MD5指纹前10位）", 1, "系统生成"),
-    ("papers", "doi", "TEXT", "论文 DOI", 0, "元数据CSV"),
-    ("papers", "title", "TEXT", "论文完整标题", 1, "LLM提取"),
-    ("papers", "publication_year", "INTEGER", "发表年份", 1, "LLM提取"),
-    ("papers", "journal_name", "TEXT", "期刊/来源名称", 0, "LLM提取"),
+    ("papers", "doi", "TEXT", "论文 DOI", 0, "搜索元数据"),
+    ("papers", "title", "TEXT", "论文完整标题", 1, "搜索元数据"),
+    ("papers", "publication_year", "INTEGER", "发表年份", 1, "搜索元数据"),
+    ("papers", "journal_name", "TEXT", "期刊/来源名称", 0, "搜索元数据"),
     ("papers", "crop_species", "TEXT", "作物物种，如'水稻/Rice'", 1, "LLM提取"),
     ("papers", "language", "TEXT", "论文语言（zh/en）", 0, "系统检测"),
     ("papers", "category", "TEXT", "论文分类（varietal_yield/management_yield等）", 0, "LLM分类"),
@@ -332,40 +352,54 @@ _SCHEMA_DOCS = [
     ("varieties", "measurement_method", "TEXT", "产量测定与计产方法", 0, "LLM提取"),
     ("varieties", "source_location", "TEXT", "数据来源位置：论文中的表格或段落，如'表5'", 1, "LLM提取"),
     ("varieties", "confidence_level", "TEXT", "提取置信度: high/medium/low", 1, "LLM评估"),
-    # ── varieties_flat 宽表 ──
+    # ── varieties_flat 宽表（全部字段，与 CREATE TABLE 一一对应）──
     ("varieties_flat", "paper_id", "TEXT", "论文唯一标识", 1, "系统生成"),
     ("varieties_flat", "study_index", "INTEGER", "试验序号", 1, "系统生成"),
     ("varieties_flat", "variety_index", "INTEGER", "品种序号", 1, "系统生成"),
-    ("varieties_flat", "doi", "TEXT", "论文DOI", 0, "元数据"),
-    ("varieties_flat", "paper_title", "TEXT", "论文标题", 1, "LLM提取"),
-    ("varieties_flat", "publication_year", "INTEGER", "发表年份", 1, "LLM提取"),
-    ("varieties_flat", "journal_name", "TEXT", "期刊名称", 0, "LLM提取"),
+    ("varieties_flat", "doi", "TEXT", "论文DOI", 0, "搜索元数据"),
+    ("varieties_flat", "paper_title", "TEXT", "论文标题", 1, "搜索元数据"),
+    ("varieties_flat", "publication_year", "INTEGER", "发表年份", 1, "搜索元数据"),
+    ("varieties_flat", "journal_name", "TEXT", "期刊名称", 0, "搜索元数据"),
     ("varieties_flat", "crop_species", "TEXT", "作物物种", 1, "LLM提取"),
     ("varieties_flat", "language", "TEXT", "论文语言", 0, "系统检测"),
     ("varieties_flat", "category", "TEXT", "论文分类", 0, "LLM分类"),
     ("varieties_flat", "study_title", "TEXT", "试验名称", 1, "LLM提取"),
     ("varieties_flat", "trial_year", "TEXT", "试验年份", 1, "LLM提取"),
-    ("varieties_flat", "site_administrative_region", "TEXT", "行政区划", 1, "LLM提取"),
+    ("varieties_flat", "sowing_date", "TEXT", "播种日期（ISO 8601）", 0, "LLM提取"),
+    ("varieties_flat", "harvest_date", "TEXT", "收获日期（ISO 8601）", 0, "LLM提取"),
+    ("varieties_flat", "country", "TEXT", "试验所在国家（ISO 3166代码）", 1, "LLM提取"),
+    ("varieties_flat", "site_administrative_region", "TEXT", "行政区划（省/市/县）", 1, "LLM提取"),
     ("varieties_flat", "experimental_site_name", "TEXT", "试验站名称", 0, "LLM提取"),
     ("varieties_flat", "latitude", "DOUBLE PRECISION", "纬度", 0, "LLM/地理编码"),
     ("varieties_flat", "longitude", "DOUBLE PRECISION", "经度", 0, "LLM/地理编码"),
+    ("varieties_flat", "altitude", "DOUBLE PRECISION", "海拔/米", 0, "LLM/地理编码"),
+    ("varieties_flat", "geo_source", "TEXT", "坐标来源: paper/lookup/nominatim/province_fallback", 0, "系统标注"),
+    ("varieties_flat", "replication_number", "INTEGER", "田间试验重复次数", 0, "LLM提取"),
+    ("varieties_flat", "plot_size", "TEXT", "小区面积", 0, "LLM提取"),
+    ("varieties_flat", "planting_density", "TEXT", "种植密度", 0, "LLM提取"),
+    ("varieties_flat", "experimental_design_description", "TEXT", "试验设计描述", 1, "LLM提取"),
+    ("varieties_flat", "experimental_design_type", "TEXT", "试验设计类型: RCBD/Split-plot/CRD", 0, "LLM提取"),
+    ("varieties_flat", "growth_facility_description", "TEXT", "试验环境描述（大田/温室）", 0, "LLM提取"),
+    ("varieties_flat", "cultural_practices", "TEXT", "栽培管理措施描述", 0, "LLM提取"),
+    ("varieties_flat", "study_notes", "TEXT", "数据质量备注", 0, "系统生成"),
     ("varieties_flat", "variety_name", "TEXT", "品种名称", 1, "LLM提取"),
     ("varieties_flat", "variety_code", "TEXT", "品种审定编号", 0, "LLM/系统回填"),
-    ("varieties_flat", "is_check_variety", "INTEGER", "是否对照品种", 1, "LLM提取"),
+    ("varieties_flat", "is_check_variety", "INTEGER", "是否对照品种（1=是, 0=否）", 1, "LLM提取"),
+    ("varieties_flat", "variety_source", "TEXT", "育种单位/来源", 0, "LLM提取"),
     ("varieties_flat", "yield_raw_value", "DOUBLE PRECISION", "原始产量数值", 1, "LLM提取"),
     ("varieties_flat", "yield_raw_unit", "TEXT", "原始产量单位", 1, "LLM提取"),
     ("varieties_flat", "yield_standard_value", "DOUBLE PRECISION", "换算后kg/ha值", 0, "程序计算"),
+    ("varieties_flat", "yield_standard_unit", "TEXT", "标准单位，固定kg/ha", 0, "程序固定"),
+    ("varieties_flat", "yield_value_type", "TEXT", "产量值类型: plot_mean/single_replicate/converted", 1, "LLM提取"),
+    ("varieties_flat", "significance_group", "TEXT", "显著性字母标记（a/b/ab）", 0, "LLM提取"),
     ("varieties_flat", "pct_over_check", "DOUBLE PRECISION", "增产/减产百分比", 0, "LLM提取"),
-    ("varieties_flat", "source_location", "TEXT", "数据来源位置", 1, "LLM提取"),
-    ("varieties_flat", "confidence_level", "TEXT", "提取置信度", 1, "LLM评估"),
-    ("varieties_flat", "extracted_at", "TEXT", "提取时间", 0, "系统生成"),
+    ("varieties_flat", "measurement_method", "TEXT", "产量测定与计产方法", 0, "LLM提取"),
+    ("varieties_flat", "source_location", "TEXT", "数据来源位置（如'表5'）", 1, "LLM提取"),
+    ("varieties_flat", "confidence_level", "TEXT", "提取置信度: high/medium/low", 1, "LLM评估"),
+    ("varieties_flat", "extracted_at", "TEXT", "提取时间（ISO 8601）", 0, "系统生成"),
     # ── classification 表 ──
-    ("classification", "paper_id", "TEXT", "论文唯一标识", 1, "系统生成"),
-    ("classification", "doi", "TEXT", "论文DOI", 0, "元数据"),
-    ("classification", "title", "TEXT", "论文标题", 1, "元数据"),
+    ("classification", "paper_id", "TEXT", "论文唯一标识（FK → paper_status）", 1, "系统生成"),
     ("classification", "language", "TEXT", "论文语言", 0, "系统检测"),
-    ("classification", "year", "TEXT", "发表年份", 0, "元数据"),
-    ("classification", "journal", "TEXT", "期刊名称", 0, "元数据"),
     ("classification", "category", "TEXT", "分类结果（5类之一）", 1, "LLM分类"),
     ("classification", "confidence", "DOUBLE PRECISION", "分类置信度（0-1）", 0, "LLM评估"),
     ("classification", "reasoning", "TEXT", "分类判断依据", 0, "LLM生成"),
@@ -401,12 +435,20 @@ _SCHEMA_DOCS = [
     ("pdf_missing", "doi", "TEXT", "论文DOI", 0, "元数据"),
     ("pdf_missing", "reason", "TEXT", "下载失败原因（404/timeout/error）", 1, "系统记录"),
     ("pdf_missing", "attempted_at", "TEXT", "尝试下载时间（ISO 8601）", 0, "系统生成"),
+    # ── _schema_doc 字段文档表 ──
+    ("_schema_doc", "table_name", "TEXT", "所属表名", 1, "系统维护"),
+    ("_schema_doc", "column_name", "TEXT", "字段名", 1, "系统维护"),
+    ("_schema_doc", "column_type", "TEXT", "字段类型（PG语法）", 0, "系统维护"),
+    ("_schema_doc", "description", "TEXT", "字段中文说明", 0, "系统维护"),
+    ("_schema_doc", "is_required", "INTEGER", "是否必填（1=是, 0=否）", 0, "系统维护"),
+    ("_schema_doc", "source", "TEXT", "数据来源（搜索元数据/LLM提取/程序计算/系统生成等）", 0, "系统维护"),
 ]
 
 
 def _populate_schema_doc(conn):
-    """填充字段文档表（幂等操作，ON CONFLICT DO UPDATE）。"""
+    """填充字段文档表 + 为所有表和字段添加 PG 原生 COMMENT（幂等操作）。"""
     with conn.cursor() as cur:
+        # ── 字段文档表 ──
         for table, col, col_type, desc, required, source in _SCHEMA_DOCS:
             cur.execute("""
                 INSERT INTO _schema_doc (table_name, column_name, column_type, description, is_required, source)
@@ -417,6 +459,18 @@ def _populate_schema_doc(conn):
                     is_required = EXCLUDED.is_required,
                     source = EXCLUDED.source
             """, (table, col, col_type, desc, required, source))
+
+        # ── 表级注释 ──
+        for table, comment in _TABLE_COMMENTS.items():
+            cur.execute(f"COMMENT ON TABLE {table} IS %s", (comment,))
+
+        # ── 字段级注释 ──
+        for table, col, _col_type, desc, _required, source in _SCHEMA_DOCS:
+            cur.execute(
+                f"COMMENT ON COLUMN {table}.{col} IS %s",
+                (f"{desc}（来源: {source}）",),
+            )
+
     conn.commit()
 
 
@@ -435,9 +489,11 @@ def insert_extraction(conn, result: dict, paper_id: str):
 
     paper = extraction.get("paper", {})
     studies = extraction.get("studies", [])
+    meta = result.get("paper_meta", {})
 
     with conn.cursor() as cur:
         # ── papers 表 ──
+        # doi/title/year/journal 从搜索元数据直填（权威来源），crop_species 等从 LLM 取
         cur.execute("""
             INSERT INTO papers
             (paper_id, doi, title, publication_year, journal_name, crop_species,
@@ -450,10 +506,10 @@ def insert_extraction(conn, result: dict, paper_id: str):
                 category = EXCLUDED.category, extracted_at = EXCLUDED.extracted_at
         """, (
             paper_id,
-            paper.get("paper_doi"),
-            paper.get("paper_title"),
-            paper.get("publication_year"),
-            paper.get("journal_name"),
+            meta.get("doi") or paper.get("paper_doi"),
+            meta.get("title") or paper.get("paper_title"),
+            int(meta["year"]) if meta.get("year", "").isdigit() else paper.get("publication_year"),
+            meta.get("journal") or paper.get("journal_name"),
             paper.get("crop_species"),
             result.get("language"),
             result.get("category"),
@@ -548,8 +604,10 @@ def insert_extraction(conn, result: dict, paper_id: str):
                         extracted_at = EXCLUDED.extracted_at
                 """, (
                     paper_id, si, vi,
-                    paper.get("paper_doi"), paper.get("paper_title"),
-                    paper.get("publication_year"), paper.get("journal_name"),
+                    meta.get("doi") or paper.get("paper_doi"),
+                    meta.get("title") or paper.get("paper_title"),
+                    int(meta["year"]) if meta.get("year", "").isdigit() else paper.get("publication_year"),
+                    meta.get("journal") or paper.get("journal_name"),
                     paper.get("crop_species"), result.get("language"), result.get("category"),
                     study.get("study_title"), study.get("trial_year"),
                     study.get("sowing_date"), study.get("harvest_date"),
@@ -590,17 +648,17 @@ def insert_classification(conn, records: List[dict]):
 
             cur.execute("""
                 INSERT INTO classification
-                (paper_id, doi, title, language, year, journal, category,
-                 confidence, reasoning, key_signals, crop_species, paper_type,
+                (paper_id, language, category, confidence, reasoning,
+                 key_signals, crop_species, paper_type,
                  has_yield_data, research_country)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (paper_id) DO UPDATE SET
                     category = EXCLUDED.category, confidence = EXCLUDED.confidence,
                     reasoning = EXCLUDED.reasoning, key_signals = EXCLUDED.key_signals,
                     crop_species = EXCLUDED.crop_species, research_country = EXCLUDED.research_country
             """, (
-                cls.get("paper_id"), cls.get("doi"), cls.get("title"),
-                cls.get("language"), cls.get("year"), cls.get("journal"),
+                cls.get("paper_id"),
+                cls.get("language"),
                 cls.get("category"), cls.get("confidence"), cls.get("reasoning"),
                 key_signals, cls.get("crop_species"), cls.get("paper_type"),
                 has_yield_int, cls.get("research_country"),

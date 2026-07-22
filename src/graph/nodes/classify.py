@@ -54,8 +54,6 @@ def classify_node(state: PaperState, config: AppConfig, llm: LLMClient) -> dict:
     result = llm.call_json(prompt, max_tokens=1000)
     classification = result or {"category": "unknown", "language": "zh"}
     classification["paper_id"] = state["paper_id"]
-    classification["title"] = paper_meta.get("title", "")
-    classification["doi"] = paper_meta.get("doi", "")
 
     return {
         "classification": classification,

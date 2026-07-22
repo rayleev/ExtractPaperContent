@@ -43,10 +43,6 @@
 ```json
 {{
   "paper": {{
-    "paper_doi": "论文DOI（如有）",
-    "paper_title": "[REQUIRED] 论文完整标题",
-    "publication_year": "[REQUIRED] 发表年份，整数",
-    "journal_name": "期刊/来源名称（如有）",
     "crop_species": "[REQUIRED] 作物物种，如 '水稻 / Rice'",
     "data_file_link": "数据文件链接（可选）",
     "data_file_description": "数据文件格式说明（可选）",
