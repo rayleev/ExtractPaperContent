@@ -76,23 +76,30 @@ class MinerUClient:
             time.sleep(self.config.poll_interval)
         return "timeout"
 
-    def get_result(self, task_id: str) -> Optional[str]:
-        """获取解析后的 Markdown 文本。"""
+    def get_result(self, task_id: str, max_retries: int = 3) -> Optional[str]:
+        """获取解析后的 Markdown 文本（带重试，应对代理 502）。"""
         url = f"{self.config.base_url}/graph/v1/tasks/{task_id}/result"
-        try:
-            resp = self.session.get(url, timeout=60)
-            resp.raise_for_status()
-            data = resp.json()
-            results = data.get("results", {})
-            for filename, file_data in results.items():
-                md = file_data.get("md_content", "")
-                if md:
-                    return md
-            logger.warning(f"  No markdown content for task {task_id[:8]}...")
-            return None
-        except Exception as e:
-            logger.error(f"  Get result failed for {task_id[:8]}...: {e}")
-            return None
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = self.session.get(url, timeout=60)
+                resp.raise_for_status()
+                data = resp.json()
+                results = data.get("results", {})
+                for filename, file_data in results.items():
+                    md = file_data.get("md_content", "")
+                    if md:
+                        return md
+                logger.warning(f"  No markdown content for task {task_id[:8]}...")
+                return None
+            except Exception as e:
+                logger.warning(
+                    f"  Get result attempt {attempt}/{max_retries} failed "
+                    f"for {task_id[:8]}...: {e}"
+                )
+                if attempt < max_retries:
+                    time.sleep(5)
+        logger.error(f"  Get result exhausted retries for {task_id[:8]}...")
+        return None
 
     def parse_pdf(self, pdf_path: Path) -> Optional[str]:
         """完整流程：提交 -> 轮询 -> 获取结果。"""
