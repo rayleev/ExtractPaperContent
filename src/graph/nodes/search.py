@@ -49,7 +49,7 @@ def _convert_ss_paper(sp: dict) -> dict:
         "title": title,
         "abstract": sp.get("abstract", ""),
         "keywords": sp.get("keywords", ""),
-        "year": str(sp.get("publicationYear", "")),
+        "year": str(sp.get("publicationYear") or sp.get("publication_year") or ""),
         "journal": sp.get("journal", ""),
         "language": "en",
     }

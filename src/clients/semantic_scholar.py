@@ -146,16 +146,16 @@ class SemanticScholarClient:
         Returns:
             论文记录列表；若请求全部失败则返回空列表。
         """
-        url = f"{self.base_url}/graph/v2/paper/search/bulk"
+        url = f"{self.base_url}/graph/v1/paper/search"
         all_results: list[dict] = []
-        token: Optional[str] = None
+        cursor: Optional[str] = None
 
         while True:
             params: dict = {"query": query, "fields": fields}
             if year:
                 params["year"] = year
-            if token:
-                params["token"] = token
+            if cursor:
+                params["cursor"] = cursor
 
             resp = self._request_with_retry("GET", url, params=params, timeout=120)
             if resp is None:
@@ -178,8 +178,11 @@ class SemanticScholarClient:
                     all_results = all_results[:limit]
                     break
 
-            token = body.get("token")
-            if not token:
+            # v1 接口使用 hasNext + nextCursor 翻页
+            if not body.get("hasNext"):
+                break
+            cursor = body.get("nextCursor")
+            if not cursor:
                 break
 
         logger.info(
