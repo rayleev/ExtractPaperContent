@@ -27,6 +27,10 @@ class RunRequest(BaseModel):
         default=None,
         description="按 DOI 或标题关键词过滤（仅处理匹配的论文）",
     )
+    limit: Optional[int] = Field(
+        default=None,
+        description="搜索阶段最多返回的论文数量（小批次测试用，如 20）",
+    )
 
 
 class RunResponse(BaseModel):
@@ -71,3 +75,17 @@ class PaperStatusResponse(BaseModel):
     duration_sec: Optional[float] = None
     error_message: Optional[str] = None
     updated_at: Optional[str] = None
+
+
+class ProgressResponse(BaseModel):
+    """全局处理进度（按状态和实例分组）。"""
+    total: int = Field(description="论文总数")
+    by_status: dict = Field(
+        default_factory=dict,
+        description="按状态分组: {pending, processing, completed, failed, skipped}",
+    )
+    by_instance: dict = Field(
+        default_factory=dict,
+        description="按实例分组: {instance-1: {processing: N, completed: M}, ...}",
+    )
+    completion_pct: float = Field(description="完成百分比")

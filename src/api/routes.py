@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException
 
 from src.api.schemas import (
     RunRequest, RunResponse, JobStatus,
-    TableStats, PaperStatusResponse,
+    TableStats, PaperStatusResponse, ProgressResponse,
 )
 
 logger = logging.getLogger("paper_extractor")
@@ -106,12 +106,17 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
             request_interval=config.semantic_scholar.request_interval,
         )
 
-        # ── 搜索阶段（在 BatchOrchestrator 之前执行）──
-        papers = []
+        # ── 搜索阶段：结果直接写入 paper_status 表 ──
         if request.step in ("search", "all"):
             _update_job(job_id, step="search")
+
+            # 初始化 DB 连接（搜索入库需要）
+            from src.graph.output import init_database
+            search_conn = init_database(config.database.connection_string)
+
             empty_state: PaperState = {"paper_id": "", "paper_meta": {}, "status": "pending", "errors": []}
-            search_result = search_node(empty_state, config, ss_client)
+            search_result = search_node(empty_state, config, ss_client, db_conn=search_conn, limit=request.limit)
+            search_conn.close()
 
             if search_result.get("status") == "search_empty":
                 _update_job(job_id,
@@ -122,70 +127,27 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
                 )
                 return
 
-            # 将搜索结果转换为 paper dict 格式（兼容 discover_papers 的输出）
-            import hashlib, re
-            for sp in search_result.get("search_results", []):
-                paper_id_raw = sp.get("paperId", "")
-                title = sp.get("title", "")
-                # 生成稳定 paper_id（与 loader.py 逻辑一致）
-                normalized = re.sub(r'\s+', '', title).lower()
-                fingerprint = hashlib.md5(normalized.encode("utf-8")).hexdigest()[:10]
-                paper = {
-                    "paper_id": f"P_{fingerprint}",
-                    "ss_paper_id": paper_id_raw,
-                    "doi": sp.get("doi", ""),
-                    "title": title,
-                    "abstract": sp.get("abstract", ""),
-                    "keywords": sp.get("keywords", ""),
-                    "year": str(sp.get("publicationYear", "")),
-                    "journal": sp.get("journal", ""),
-                    "language": "en",  # SS 论文默认英文
-                }
-                papers.append(paper)
-
-            logger.info(f"[Job {job_id[:8]}] Search: {len(papers)} papers found")
+            search_total = search_result.get("search_total", 0)
+            search_new = search_result.get("search_new", 0)
+            logger.info(
+                f"[Job {job_id[:8]}] Search: {search_total} papers found, "
+                f"{search_new} new in DB"
+            )
 
             if request.step == "search":
-                # 仅搜索，到此结束
                 _update_job(job_id,
                     status="completed", step="search",
-                    stats={"total": len(papers), "completed": len(papers), "failed": 0, "skipped": 0},
+                    stats={"total": search_total, "completed": search_new, "failed": 0, "skipped": search_total - search_new},
                     finished_at=datetime.now().isoformat(),
-                    message=f"搜索完成: {len(papers)} 篇论文",
+                    message=f"搜索完成: {search_total} 篇论文, 新入库 {search_new} 篇",
                 )
                 return
-        else:
-            # 非搜索步骤：从本地文件系统发现论文
-            papers = discover_papers(config)
 
-        # ── 论文过滤 ──
-        if request.paper_filter:
-            keyword = request.paper_filter.lower()
-            papers = [
-                p for p in papers
-                if keyword in (p.get("doi", "") + p.get("title", "")).lower()
-            ]
-            logger.info(f"[Job {job_id[:8]}] Filtered to {len(papers)} papers matching '{request.paper_filter}'")
-
-        if not papers:
-            _update_job(job_id,
-                status="completed",
-                stats={"total": 0, "completed": 0, "failed": 0, "skipped": 0},
-                finished_at=datetime.now().isoformat(),
-                message="没有找到匹配的论文",
-            )
-            return
-
-        # ── 初始化 MinerU / Geocoder ──
+        # ── 处理阶段 ──
         mineru_client = None
-        has_pdf = any(p.get("pdf_path") and not p.get("md_path") for p in papers)
-        if has_pdf:
-            mineru_client = MinerUClient(config.mineru)
-
         geocoder = Geocoder(config) if config.geocoding.enabled else None
 
-        # ── 运行 BatchOrchestrator ──
-        _update_job(job_id, step="extract")
+        _update_job(job_id, step=request.step)
         orchestrator = BatchOrchestrator(
             config=config,
             llm=llm,
@@ -195,7 +157,36 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
             stop_after=stop_after,
         )
 
-        stats = orchestrator.process_batch(papers=papers)
+        if request.step in ("search", "all"):
+            # DB 驱动：从 paper_status 分块拉取 pending 论文处理
+            stats = orchestrator.process_from_db(chunk_size=100)
+        else:
+            # 本地文件驱动：从文件系统发现论文
+            papers = discover_papers(config)
+
+            if request.paper_filter:
+                keyword = request.paper_filter.lower()
+                papers = [
+                    p for p in papers
+                    if keyword in (p.get("doi", "") + p.get("title", "")).lower()
+                ]
+                logger.info(f"[Job {job_id[:8]}] Filtered to {len(papers)} papers matching '{request.paper_filter}'")
+
+            if not papers:
+                _update_job(job_id,
+                    status="completed",
+                    stats={"total": 0, "completed": 0, "failed": 0, "skipped": 0},
+                    finished_at=datetime.now().isoformat(),
+                    message="没有找到匹配的论文",
+                )
+                return
+
+            # 按需初始化 MinerU（本地 PDF 需要解析）
+            has_pdf = any(p.get("pdf_path") and not p.get("md_path") for p in papers)
+            if has_pdf:
+                orchestrator.mineru_client = MinerUClient(config.mineru)
+
+            stats = orchestrator.process_batch(papers=papers)
 
         _update_job(job_id,
             status="completed",
@@ -283,6 +274,29 @@ def get_stats():
         return TableStats(**stats)
     except Exception as e:
         logger.error(f"Stats query failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+
+@router.get("/progress", response_model=ProgressResponse)
+def get_progress():
+    """
+    查询全局处理进度。
+
+    按状态分组（pending/processing/completed/failed/skipped），
+    按实例分组（各实例的领取和完成数量），以及总体完成百分比。
+    适用于大规模数据（15M+），全部走 SQL 聚合。
+    """
+    from src.config import load_config
+    from src.graph.output import init_database, get_progress as _get_progress
+
+    config = load_config()
+    try:
+        conn = init_database(config.database.connection_string)
+        progress = _get_progress(conn)
+        conn.close()
+        return ProgressResponse(**progress)
+    except Exception as e:
+        logger.error(f"Progress query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
 

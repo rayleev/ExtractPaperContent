@@ -132,17 +132,19 @@ class SemanticScholarClient:
         query: str,
         fields: str = DEFAULT_SEARCH_FIELDS,
         year: Optional[str] = None,
+        limit: Optional[int] = None,
     ) -> list[dict]:
         """
-        按关键词批量搜索论文，自动翻页直到游标为空，返回全部结果列表。
+        按关键词批量搜索论文，自动翻页直到游标为空或达到 limit，返回结果列表。
 
         Args:
             query: 搜索关键词。
             fields: 逗号分隔的返回字段列表，默认包含常用元数据字段。
             year: 可选的出版年份范围，格式如 ``"2020-2025"``。
+            limit: 最多返回的论文数量。None 表示不限制（拉取全部）。
 
         Returns:
-            所有论文记录组成的列表；若请求全部失败则返回空列表。
+            论文记录列表；若请求全部失败则返回空列表。
         """
         url = f"{self.base_url}/graph/v2/paper/search/bulk"
         all_results: list[dict] = []
@@ -171,6 +173,10 @@ class SemanticScholarClient:
             data = body.get("data")
             if data:
                 all_results.extend(data)
+                # 达到 limit 后提前停止翻页
+                if limit and len(all_results) >= limit:
+                    all_results = all_results[:limit]
+                    break
 
             token = body.get("token")
             if not token:

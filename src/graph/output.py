@@ -192,7 +192,13 @@ CREATE TABLE IF NOT EXISTS paper_status (
     duration_sec    DOUBLE PRECISION,
     error_message   TEXT,
     run_id          TEXT,
-    updated_at      TEXT
+    updated_at      TEXT,
+    -- 搜索阶段写入的论文元数据（供后续 classify/download/extract 使用）
+    ss_paper_id     TEXT,
+    doi             TEXT,
+    abstract        TEXT,
+    year            TEXT,
+    journal         TEXT
 );
 
 -- 无法获取 PDF 的论文记录
@@ -253,6 +259,15 @@ def init_database(connection_string: str):
             statement = "\n".join(sql_lines).strip()
             if statement:
                 cur.execute(statement)
+
+        # 兼容已有数据库：为 paper_status 补充搜索元数据列
+        for col, col_type in [
+            ("ss_paper_id", "TEXT"), ("doi", "TEXT"),
+            ("abstract", "TEXT"), ("year", "TEXT"), ("journal", "TEXT"),
+        ]:
+            cur.execute(
+                f"ALTER TABLE paper_status ADD COLUMN IF NOT EXISTS {col} {col_type}"
+            )
 
     conn.commit()
     _populate_schema_doc(conn)
@@ -375,6 +390,11 @@ _SCHEMA_DOCS = [
     ("paper_status", "error_message", "TEXT", "错误信息（失败时）", 0, "系统记录"),
     ("paper_status", "run_id", "TEXT", "本次运行ID（时间戳）", 0, "系统生成"),
     ("paper_status", "updated_at", "TEXT", "最后更新时间（ISO 8601）", 0, "系统生成"),
+    ("paper_status", "ss_paper_id", "TEXT", "Semantic Scholar paperId（用于 PDF 下载）", 0, "搜索阶段"),
+    ("paper_status", "doi", "TEXT", "论文 DOI", 0, "搜索阶段"),
+    ("paper_status", "abstract", "TEXT", "论文摘要（用于 LLM 分类）", 0, "搜索阶段"),
+    ("paper_status", "year", "TEXT", "发表年份", 0, "搜索阶段"),
+    ("paper_status", "journal", "TEXT", "期刊名称", 0, "搜索阶段"),
     # ── pdf_missing 表 ──
     ("pdf_missing", "paper_id", "TEXT", "论文唯一标识", 1, "系统生成"),
     ("pdf_missing", "title", "TEXT", "论文标题", 0, "元数据"),
@@ -662,6 +682,58 @@ def insert_pdf_missing(conn, paper_id: str, title: str = "", doi: str = "", reas
     conn.commit()
 
 
+def insert_search_results(conn, papers: List[dict]) -> int:
+    """
+    将搜索结果批量写入 paper_status 表（幂等）。
+
+    已存在的论文（无论状态）不会被覆盖，确保：
+      - 多实例搜索同一关键词不会产生重复
+      - 正在处理或已完成的论文不会被重置为 pending
+
+    Args:
+        papers: 论文字典列表，需包含 paper_id, title 等字段。
+
+    Returns:
+        新插入的记录数（不含已存在被跳过的）。
+    """
+    if not papers:
+        return 0
+
+    from datetime import datetime
+    now = datetime.now().isoformat()
+    inserted = 0
+
+    with conn.cursor() as cur:
+        for p in papers:
+            pid = p.get("paper_id", "")
+            if not pid:
+                continue
+            cur.execute("""
+                INSERT INTO paper_status
+                    (paper_id, title, status, updated_at,
+                     ss_paper_id, doi, abstract, year, journal)
+                VALUES (%s, %s, 'pending', %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (paper_id) DO NOTHING
+            """, (
+                pid,
+                p.get("title", ""),
+                now,
+                p.get("ss_paper_id", ""),
+                p.get("doi", ""),
+                p.get("abstract", ""),
+                p.get("year", ""),
+                p.get("journal", ""),
+            ))
+            inserted += cur.rowcount
+
+    conn.commit()
+    logger.info(
+        f"Search results → paper_status: {inserted} new, "
+        f"{len(papers) - inserted} already existed"
+    )
+    return inserted
+
+
 def claim_tasks(conn, instance_id: str, limit: int = 10) -> List[str]:
     """
     原子领取待处理任务（多实例安全）。
@@ -731,3 +803,48 @@ def get_table_stats(conn) -> dict:
             cur.execute(f"SELECT COUNT(*) FROM {table}")
             stats[table] = cur.fetchone()[0]
     return stats
+
+
+def get_progress(conn) -> dict:
+    """
+    查询论文处理进度（按状态和实例分组）。
+
+    适用于大规模数据（15M+），全部走 SQL 聚合，不加载明细到内存。
+
+    Returns:
+        {
+            "total": 150000,
+            "by_status": {"pending": 1000, "processing": 30, "completed": 140000, ...},
+            "by_instance": {"instance-1": {"processing": 10, "completed": 50000}, ...},
+            "completion_pct": 93.3,
+        }
+    """
+    result = {"total": 0, "by_status": {}, "by_instance": {}, "completion_pct": 0.0}
+
+    with conn.cursor() as cur:
+        # 按状态分组统计
+        cur.execute("""
+            SELECT status, COUNT(*) FROM paper_status GROUP BY status
+        """)
+        for status, count in cur.fetchall():
+            result["by_status"][status or "unknown"] = count
+            result["total"] += count
+
+        # 按实例分组统计（仅 processing/completed，了解各实例负载）
+        cur.execute("""
+            SELECT claimed_by, status, COUNT(*)
+            FROM paper_status
+            WHERE claimed_by IS NOT NULL
+            GROUP BY claimed_by, status
+        """)
+        for instance, status, count in cur.fetchall():
+            if instance not in result["by_instance"]:
+                result["by_instance"][instance] = {}
+            result["by_instance"][instance][status] = count
+
+    # 计算完成百分比
+    completed = result["by_status"].get("completed", 0)
+    if result["total"] > 0:
+        result["completion_pct"] = round(completed * 100.0 / result["total"], 2)
+
+    return result
