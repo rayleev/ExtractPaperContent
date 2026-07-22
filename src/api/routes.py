@@ -265,11 +265,11 @@ def list_jobs():
 def get_stats():
     """获取 PostgreSQL 各表的行数统计。"""
     from src.config import load_config
-    from src.graph.output import init_database, get_table_stats
+    from src.graph.output import get_connection, get_table_stats
 
     config = load_config()
     try:
-        conn = init_database(config.database.connection_string)
+        conn = get_connection(config.database.connection_string)
         stats = get_table_stats(conn)
         conn.close()
         return TableStats(**stats)
@@ -288,11 +288,11 @@ def get_progress():
     适用于大规模数据（15M+），全部走 SQL 聚合。
     """
     from src.config import load_config
-    from src.graph.output import init_database, get_progress as _get_progress
+    from src.graph.output import get_connection, get_progress as _get_progress
 
     config = load_config()
     try:
-        conn = init_database(config.database.connection_string)
+        conn = get_connection(config.database.connection_string)
         progress = _get_progress(conn)
         conn.close()
         return ProgressResponse(**progress)
@@ -313,11 +313,11 @@ def get_paper_statuses(
     默认返回最新 100 条。
     """
     from src.config import load_config
-    from src.graph.output import init_database
+    from src.graph.output import get_connection
 
     config = load_config()
     try:
-        conn = init_database(config.database.connection_string)
+        conn = get_connection(config.database.connection_string)
         with conn.cursor() as cur:
             if status:
                 cur.execute(
@@ -351,11 +351,11 @@ def get_paper_statuses(
 def get_paper_status(paper_id: str):
     """查询单篇论文的处理状态。"""
     from src.config import load_config
-    from src.graph.output import init_database
+    from src.graph.output import get_connection
 
     config = load_config()
     try:
-        conn = init_database(config.database.connection_string)
+        conn = get_connection(config.database.connection_string)
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT paper_id, title, target_step, status, duration_sec, error_message, updated_at "

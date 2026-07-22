@@ -88,6 +88,19 @@ def create_app() -> FastAPI:
     # 注册路由
     app.include_router(router)
 
+    @app.on_event("startup")
+    def _init_db():
+        """服务启动时一次性初始化数据库 schema（建表、索引、注释）。"""
+        try:
+            from src.config import load_config
+            from src.graph.output import init_database
+            config = load_config()
+            conn = init_database(config.database.connection_string)
+            conn.close()
+            logger.info("Database schema initialized at startup")
+        except Exception as e:
+            logger.warning(f"Database schema init failed at startup (will retry on first pipeline run): {e}")
+
     @app.get("/", tags=["health"])
     def root():
         """健康检查。"""
@@ -101,13 +114,13 @@ def create_app() -> FastAPI:
     def health():
         """详细健康检查（含数据库连通性）。"""
         from src.config import load_config
-        from src.graph.output import init_database, get_table_stats
+        from src.graph.output import get_connection, get_table_stats
 
         db_ok = False
         db_info = ""
         try:
             config = load_config()
-            conn = init_database(config.database.connection_string)
+            conn = get_connection(config.database.connection_string)
             stats = get_table_stats(conn)
             conn.close()
             db_ok = True

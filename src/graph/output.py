@@ -232,6 +232,18 @@ CREATE INDEX IF NOT EXISTS idx_pdf_missing ON pdf_missing(paper_id);
 """
 
 
+def get_connection(connection_string: str):
+    """
+    获取 PostgreSQL 连接（轻量级，不执行任何 DDL）。
+
+    适用于 API 端点等高频场景。建表/注释等 schema 初始化
+    由 init_database() 在服务启动时一次性完成。
+    """
+    conn = psycopg2.connect(connection_string)
+    conn.autocommit = False
+    return conn
+
+
 def init_database(connection_string: str):
     """
     初始化 PostgreSQL 数据库，创建所有表、索引和字段文档。
