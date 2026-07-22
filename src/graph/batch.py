@@ -50,6 +50,7 @@ class BatchOrchestrator:
         llm: LLMClient,
         geocoder: Geocoder,
         mineru_client: Optional[MinerUClient] = None,
+        ss_client=None,
         max_concurrent: int = 10,
         stop_after: str = "",
     ):
@@ -57,6 +58,7 @@ class BatchOrchestrator:
         self.llm = llm
         self.geocoder = geocoder
         self.mineru_client = mineru_client
+        self.ss_client = ss_client
         self.max_concurrent = max_concurrent
         self.stop_after = stop_after  # 分步执行：在此节点后停止（空 = 完整流程）
 
@@ -292,6 +294,7 @@ class BatchOrchestrator:
             llm=self.llm,
             mineru_client=self.mineru_client,
             geocoder=self.geocoder,
+            ss_client=self.ss_client,
             checkpoint_path=self.checkpoint_path,
         )
 

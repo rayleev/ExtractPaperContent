@@ -153,6 +153,7 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
             llm=llm,
             geocoder=geocoder,
             mineru_client=mineru_client,
+            ss_client=ss_client,
             max_concurrent=config.concurrency.extract_workers,
             stop_after=stop_after,
         )
