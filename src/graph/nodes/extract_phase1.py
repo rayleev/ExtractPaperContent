@@ -54,12 +54,17 @@ def extract_phase1_node(
         methods=methods,
     )
 
+    logger.info(f"  [{pid[:25]}] Phase1: prompt {len(prompt)} chars, calling LLM...")
     result = llm.call_json(prompt, max_tokens=config.llm.max_tokens)
     if not result:
+        logger.warning(f"  [{pid[:25]}] Phase1 FAILED: LLM returned no result")
         return {
             "phase1_result": {"paper": {}, "experiment_sections": []},
             "status": "phase1_failed",
         }
+
+    sections = result.get("experiment_sections", [])
+    logger.info(f"  [{pid[:25]}] Phase1 done: {len(sections)} experiment section(s) identified")
 
     return {
         "phase1_result": result,

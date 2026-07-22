@@ -39,13 +39,17 @@ from src.clients.llm import LLMClient
 
 
 def setup_logging(config):
-    """配置日志。"""
+    """配置日志（CLI 模式）。"""
+    import os
     log_dir = config.log_path
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "extractor.log"
+    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
     logging.basicConfig(
-        level=getattr(logging, "INFO"),
-        format="%(asctime)s [%(levelname)s] %(message)s",
+        level=level,
+        format="%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[
             logging.FileHandler(log_file, encoding="utf-8"),
             logging.StreamHandler(sys.stdout),

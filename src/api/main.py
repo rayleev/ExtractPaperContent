@@ -10,6 +10,7 @@ FastAPI 应用入口 — Paper Extractor HTTP 服务。
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -23,7 +24,46 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.api.routes import router
 
-logger = logging.getLogger("paper_extractor")
+
+# ── 日志配置（API/Docker 模式）──────────────────────────────
+# CLI 模式由 run.py 的 setup_logging() 配置；
+# --serve 模式走这里，确保 pipeline 后台线程的日志不丢失。
+
+def _setup_api_logging():
+    """配置 paper_extractor logger（幂等，避免重复添加 handler）。"""
+    _logger = logging.getLogger("paper_extractor")
+    if _logger.handlers:
+        return _logger  # 已配置过（如 CLI 模式先调用了 setup_logging）
+
+    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+
+    fmt = logging.Formatter(
+        "%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    # stdout handler（Docker log collector 会捕获）
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setFormatter(fmt)
+    _logger.addHandler(stdout_handler)
+
+    # 文件 handler（可选，写入 output/logs/api.log）
+    try:
+        log_dir = PROJECT_ROOT / "output" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_dir / "api.log", encoding="utf-8")
+        file_handler.setFormatter(fmt)
+        _logger.addHandler(file_handler)
+    except Exception:
+        pass  # 文件写入失败不影响服务启动
+
+    _logger.setLevel(level)
+    _logger.info(f"API logging initialized: level={level_name}")
+    return _logger
+
+
+logger = _setup_api_logging()
 
 
 def create_app() -> FastAPI:

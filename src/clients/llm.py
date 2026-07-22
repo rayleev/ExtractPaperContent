@@ -58,17 +58,27 @@ class LLMClient:
             "max_tokens": max_tokens or self.config.max_tokens,
             "temperature": self.config.temperature,
         }
+        prompt_chars = len(prompt)
         for attempt in range(1, self.config.max_retries + 1):
             try:
+                t0 = time.time()
                 resp = requests.post(
                     url, headers=self.headers, json=payload, timeout=self.config.timeout
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                return data["choices"][0]["message"]["content"]
+                content = data["choices"][0]["message"]["content"]
+                elapsed = time.time() - t0
+                logger.debug(
+                    f"  LLM ok: {prompt_chars} chars → {len(content)} chars, "
+                    f"{elapsed:.1f}s, model={self.config.model}"
+                )
+                return content
             except Exception as e:
+                elapsed = time.time() - t0
                 logger.warning(
-                    f"  LLM call attempt {attempt}/{self.config.max_retries} failed: {e}"
+                    f"  LLM attempt {attempt}/{self.config.max_retries} failed "
+                    f"({elapsed:.1f}s, prompt={prompt_chars} chars): {e}"
                 )
                 if attempt < self.config.max_retries:
                     time.sleep(min(3 * (2 ** attempt), 60))

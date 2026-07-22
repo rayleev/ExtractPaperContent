@@ -273,7 +273,7 @@ class Geocoder:
 
                 if resp.status_code == 200:
                     data = resp.json()
-                    logger.info(f"    [TIANDITU_RAW] query='{query}' → {json.dumps(data, ensure_ascii=False)[:500]}")
+                    logger.debug(f"    [TIANDITU_RAW] query='{query}' → {json.dumps(data, ensure_ascii=False)[:500]}")
 
                     status = data.get("status")
                     if str(status) != "0":
@@ -324,7 +324,7 @@ class Geocoder:
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    logger.info(f"    [ALT_RAW] lat={lat},lon={lon} → {json.dumps(data, ensure_ascii=False)[:500]}")
+                    logger.debug(f"    [ALT_RAW] lat={lat},lon={lon} → {json.dumps(data, ensure_ascii=False)[:500]}")
 
                     elevation = data.get("elevation")
                     if isinstance(elevation, list) and len(elevation) > 0:

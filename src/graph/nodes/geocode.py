@@ -30,10 +30,13 @@ def geocode_node(state: PaperState, config: AppConfig, geocoder: Geocoder) -> di
 
     已有经纬度的 study 跳过（geo_source=paper）。
     """
+    pid = state["paper_id"]
     extraction = state.get("extraction", {})
     studies = extraction.get("studies", [])
 
     geocoded_count = 0
+    skipped_count = 0
+    failed_count = 0
     for study in studies:
         lat = study.get("latitude")
         lon = study.get("longitude")
@@ -41,6 +44,7 @@ def geocode_node(state: PaperState, config: AppConfig, geocoder: Geocoder) -> di
         # 论文中已有的经纬度，直接标记来源
         if lat is not None and lon is not None:
             study["geo_source"] = "paper"
+            skipped_count += 1
             continue
 
         region = study.get("site_administrative_region", "") or ""
@@ -48,6 +52,7 @@ def geocode_node(state: PaperState, config: AppConfig, geocoder: Geocoder) -> di
 
         if not region and not site:
             study["geo_source"] = "unknown"
+            failed_count += 1
             continue
 
         result = geocoder.geocode(region, site)
@@ -65,8 +70,19 @@ def geocode_node(state: PaperState, config: AppConfig, geocoder: Geocoder) -> di
             if study.get("altitude") is None:
                 _supplement_altitude_from_province(study, region, site)
             geocoded_count += 1
+            logger.debug(
+                f"  [{pid[:25]}] Geocoded: {region or site} → "
+                f"({result.latitude:.4f}, {result.longitude:.4f}) src={result.source}"
+            )
         else:
             study["geo_source"] = "unknown"
+            failed_count += 1
+            logger.warning(f"  [{pid[:25]}] Geocode FAILED: {region or site}")
+
+    logger.info(
+        f"  [{pid[:25]}] Geocoding: {len(studies)} studies, "
+        f"{geocoded_count} geocoded, {skipped_count} already had coords, {failed_count} failed"
+    )
 
     return {
         "extraction": extraction,

@@ -17,6 +17,7 @@ logger = logging.getLogger("paper_extractor")
 
 def filter_node(state: PaperState, config: AppConfig) -> dict:
     """过滤节点：判断论文是否满足提取条件。"""
+    pid = state["paper_id"]
     cls = state.get("classification", {})
     category = cls.get("category", "")
     country = cls.get("research_country", "")
@@ -27,6 +28,16 @@ def filter_node(state: PaperState, config: AppConfig) -> dict:
         category in extractable_categories
         and country in ("China", "CN", "")
     )
+
+    if is_extractable:
+        logger.info(f"  [{pid[:25]}] Filter PASS: category={category}, country={country or 'N/A'}")
+    else:
+        reason = (
+            f"category '{category}' not in extractable list"
+            if category not in extractable_categories
+            else f"country '{country}' not China"
+        )
+        logger.info(f"  [{pid[:25]}] Filter SKIP: {reason}")
 
     return {
         "is_extractable": is_extractable,

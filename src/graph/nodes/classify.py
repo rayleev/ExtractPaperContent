@@ -36,6 +36,7 @@ def classify_node(state: PaperState, config: AppConfig, llm: LLMClient) -> dict:
     目标作物列表从 config.extraction.crops 读取，支持动态扩展。
     """
     paper_meta = state["paper_meta"]
+    pid = state["paper_id"]
     prompt_template = _load_classify_prompt()
 
     # 从配置构建目标作物列表（如 "水稻/Rice, 玉米/Maize, 小麦/Wheat"）
@@ -51,9 +52,18 @@ def classify_node(state: PaperState, config: AppConfig, llm: LLMClient) -> dict:
         crop_list=crop_list,
     )
 
+    logger.info(f"  [{pid[:25]}] Classifying: {paper_meta.get('title', '')[:60]}")
     result = llm.call_json(prompt, max_tokens=1000)
     classification = result or {"category": "unknown", "language": "zh"}
-    classification["paper_id"] = state["paper_id"]
+    classification["paper_id"] = pid
+
+    logger.info(
+        f"  [{pid[:25]}] Classification: category={classification.get('category')}, "
+        f"country={classification.get('research_country', '')}, "
+        f"confidence={classification.get('confidence', '')}"
+    )
+    if not result:
+        logger.warning(f"  [{pid[:25]}] LLM returned no result, defaulting to unknown")
 
     return {
         "classification": classification,

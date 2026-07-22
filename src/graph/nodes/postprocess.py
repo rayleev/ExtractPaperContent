@@ -47,6 +47,9 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
         result = ExtractionResult.model_validate(combined)
         result.compute_standard_yields()
         extraction = result.model_dump()
+        n_studies = len(extraction.get("studies", []))
+        n_varieties = sum(len(s.get("varieties", [])) for s in extraction.get("studies", []))
+        logger.info(f"  [{pid[:25]}] Postprocess: validated {n_studies} studies, {n_varieties} varieties")
     except Exception as e:
         logger.warning(f"  [{pid[:25]}] Pydantic failed: {e}")
         extraction = combined
@@ -54,24 +57,38 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
     # ── 后处理流水线（纯代码）──
     if "studies" in extraction:
         studies = extraction["studies"]
+        before_count = len(studies)
 
         # 1. 多站点检测：site_name 含"、"的标记警告
+        multi_site = 0
         for study in studies:
             site_name = study.get("experimental_site_name", "") or ""
             if "、" in site_name or ("和" in site_name and len(site_name) > 10):
                 study["notes"] = ((study.get("notes") or "") + " [多站点警告]").strip()
+                multi_site += 1
 
         # 2. 品种审定编号回填（同一品种名在不同 study 间共享 code）
         backfill_variety_codes(studies)
 
         # 3. 非大田试验过滤（盆栽、温室、单株计产等）
         filter_non_field_experiments(studies)
+        after_field = len(studies)
 
         # 4. 无产量数据过滤（yield_raw_unit 为 % 或空）
         filter_no_yield_studies(studies)
+        after_yield = len(studies)
 
         # 5. 试验地点信息一致性回填
         normalize_site_info(studies)
+
+        removed_field = before_count - after_field
+        removed_yield = after_field - after_yield
+        if removed_field or removed_yield or multi_site:
+            logger.info(
+                f"  [{pid[:25]}] Filters: -{removed_field} non-field, "
+                f"-{removed_yield} no-yield, {multi_site} multi-site warnings, "
+                f"{len(studies)} studies remaining"
+            )
 
     return {
         "extraction": extraction,
