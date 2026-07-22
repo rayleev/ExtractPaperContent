@@ -16,6 +16,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 # 确保项目根目录在 sys.path 中
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -119,6 +120,12 @@ def create_app() -> FastAPI:
             "database": "ok" if db_ok else "error",
             "database_info": db_info,
         }
+
+    @app.get("/dashboard", tags=["dashboard"], response_class=HTMLResponse)
+    def dashboard():
+        """监控仪表盘 — 实例健康、处理进度、数据库统计、任务触发。"""
+        html_path = Path(__file__).resolve().parent / "static" / "dashboard.html"
+        return html_path.read_text(encoding="utf-8")
 
     return app
 

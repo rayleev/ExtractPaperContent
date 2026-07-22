@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Paper Extractor — Dashboard</title>
+<style>
+  :root {
+    --bg: #f5f3ee; --card: #fff; --border: #e2ddd4;
+    --text: #2c2c2c; --muted: #8a8578; --accent: #5b8c6a;
+    --accent-light: #e8f0ea; --danger: #c0392b; --warn: #e67e22;
+    --ok: #27ae60; --info: #2980b9;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", "Noto Sans SC", sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+  .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+  /* header */
+  header { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; border-bottom: 2px solid var(--accent); margin-bottom: 20px; }
+  header h1 { font-size: 20px; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+  .refresh-info { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; }
+  .dot.off { background: var(--danger); }
+
+  /* grid */
+  .grid { display: grid; gap: 16px; margin-bottom: 16px; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-2 { grid-template-columns: 1fr 1fr; }
+  .grid-4 { grid-template-columns: repeat(4, 1fr); }
+  @media (max-width: 768px) { .grid-3, .grid-2, .grid-4 { grid-template-columns: 1fr; } }
+
+  /* card */
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  .card h3 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+  .card .value { font-size: 28px; font-weight: 700; }
+  .card .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* health */
+  .health-card { display: flex; align-items: center; gap: 12px; }
+  .health-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .health-dot.ok { background: var(--ok); }
+  .health-dot.err { background: var(--danger); }
+  .health-dot.loading { background: var(--warn); animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: 0.4; } }
+  .health-info { flex: 1; }
+  .health-info .name { font-weight: 600; font-size: 14px; }
+  .health-info .detail { font-size: 12px; color: var(--muted); }
+
+  /* progress bar */
+  .progress-bar { height: 20px; background: #e8e4dc; border-radius: 10px; overflow: hidden; margin: 8px 0; }
+  .progress-fill { height: 100%; background: var(--accent); border-radius: 10px; transition: width 0.6s ease; display: flex; align-items: center; justify-content: center; }
+  .progress-fill span { font-size: 11px; color: #fff; font-weight: 600; }
+
+  /* status badges */
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .badge.completed { background: #e8f5e9; color: #2e7d32; }
+  .badge.pending { background: #fff3e0; color: #e65100; }
+  .badge.processing { background: #e3f2fd; color: #1565c0; }
+  .badge.failed { background: #fce4ec; color: #c62828; }
+  .badge.skipped { background: #f3e5f5; color: #6a1b9a; }
+  .badge.running { background: #e3f2fd; color: #1565c0; }
+  .badge.accepted { background: #fff8e1; color: #f57f17; }
+
+  /* status breakdown */
+  .status-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; border-bottom: 1px solid #f0ede6; }
+  .status-row:last-child { border-bottom: none; }
+
+  /* table */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 10px; background: #f8f6f1; color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  td { padding: 8px 10px; border-bottom: 1px solid #f0ede6; }
+  tr:hover td { background: #faf9f6; }
+
+  /* form */
+  .form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  .form-group { display: flex; flex-direction: column; gap: 4px; }
+  .form-group label { font-size: 12px; color: var(--muted); font-weight: 600; }
+  .form-group input, .form-group select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: #fff; }
+  .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent); }
+  .btn { padding: 8px 20px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #4a7a59; }
+  .btn-primary:disabled { background: #b0c4b8; cursor: not-allowed; }
+  .btn-sm { padding: 4px 12px; font-size: 12px; }
+
+  /* section title */
+  .section-title { font-size: 15px; font-weight: 600; margin: 24px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+
+  /* toast */
+  .toast { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; color: #fff; font-size: 13px; font-weight: 500; z-index: 999; transform: translateX(120%); transition: transform 0.3s ease; }
+  .toast.show { transform: translateX(0); }
+  .toast.ok { background: var(--ok); }
+  .toast.err { background: var(--danger); }
+
+  /* instance table */
+  .inst-table td:first-child { font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1><span>Paper Extractor</span> Dashboard</h1>
+    <div class="refresh-info">
+      <span class="dot" id="refreshDot"></span>
+      <span id="refreshTime">--</span>
+      <span>&nbsp;|&nbsp; 10s auto-refresh</span>
+    </div>
+  </header>
+
+  <!-- health -->
+  <div class="grid grid-3" id="healthCards">
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 1 (:8004)</div><div class="detail">checking...</div></div></div>
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 2 (:8002)</div><div class="detail">checking...</div></div></div>
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 3 (:8003)</div><div class="detail">checking...</div></div></div>
+  </div>
+
+  <!-- progress -->
+  <div class="section-title">Processing Progress</div>
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>Overall Completion</h3>
+      <div class="value" id="totalPapers">--</div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"><span id="progressPct">0%</span></div></div>
+      <div class="sub" id="progressSub">--</div>
+    </div>
+    <div class="card">
+      <h3>By Status</h3>
+      <div id="statusBreakdown"><div class="status-row"><span>Loading...</span></div></div>
+    </div>
+  </div>
+
+  <!-- by instance -->
+  <div class="card" style="margin-bottom:16px">
+    <h3>By Instance</h3>
+    <table class="inst-table">
+      <thead><tr><th>Instance</th><th>Processing</th><th>Completed</th><th>Failed</th><th>Skipped</th></tr></thead>
+      <tbody id="instanceBody"><tr><td colspan="5">Loading...</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- table stats -->
+  <div class="section-title">Database Tables</div>
+  <div class="grid grid-4" id="statsCards"></div>
+
+  <!-- trigger -->
+  <div class="section-title">Trigger Pipeline</div>
+  <div class="card">
+    <div class="form-row">
+      <div class="form-group">
+        <label>Step</label>
+        <select id="runStep">
+          <option value="all">all (full pipeline)</option>
+          <option value="search">search</option>
+          <option value="classify">classify</option>
+          <option value="download">download</option>
+          <option value="parse">parse</option>
+          <option value="extract">extract</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Limit</label>
+        <input type="number" id="runLimit" placeholder="e.g. 5" min="1" style="width:90px">
+      </div>
+      <div class="form-group">
+        <label>Keywords (comma sep)</label>
+        <input type="text" id="runKeywords" placeholder="rice yield, 水稻产量" style="width:220px">
+      </div>
+      <div class="form-group">
+        <label>Year Range</label>
+        <input type="text" id="runYear" placeholder="2020-2025" style="width:110px">
+      </div>
+      <button class="btn btn-primary" id="runBtn" onclick="triggerRun()">Run</button>
+    </div>
+  </div>
+
+  <!-- jobs -->
+  <div class="section-title">Jobs</div>
+  <div class="card">
+    <table>
+      <thead><tr><th>Job ID</th><th>Step</th><th>Status</th><th>Stats</th><th>Started</th><th>Finished</th></tr></thead>
+      <tbody id="jobsBody"><tr><td colspan="6">Loading...</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- paper status -->
+  <div class="section-title">Paper Status</div>
+  <div class="card">
+    <div style="margin-bottom:10px; display:flex; gap:8px; align-items:center;">
+      <select id="statusFilter" onchange="loadPaperStatus()" style="padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px;">
+        <option value="">All</option>
+        <option value="pending">pending</option>
+        <option value="processing">processing</option>
+        <option value="completed">completed</option>
+        <option value="failed">failed</option>
+        <option value="skipped">skipped</option>
+      </select>
+      <span style="font-size:12px; color:var(--muted)" id="paperCount"></span>
+    </div>
+    <table>
+      <thead><tr><th>Paper ID</th><th>Title</th><th>Step</th><th>Status</th><th>Duration</th><th>Error</th><th>Updated</th></tr></thead>
+      <tbody id="papersBody"><tr><td colspan="7">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const PORTS = [8004, 8002, 8003];
+const BASE = window.location.origin;
+
+function fmt(n) { return n == null ? '--' : n.toLocaleString(); }
+function shortId(id) { return id ? id.substring(0, 8) + '...' : '--'; }
+function fmtTime(iso) {
+  if (!iso) return '--';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('zh-CN', {hour12: false});
+}
+
+function toast(msg, ok) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (ok ? 'ok' : 'err');
+  setTimeout(() => t.className = 'toast', 3000);
+}
+
+// ── health ──
+async function loadHealth() {
+  const container = document.getElementById('healthCards');
+  const results = await Promise.allSettled(
+    PORTS.map(p => fetch(`http://${window.location.hostname}:${p}/health`).then(r => r.json()))
+  );
+  container.innerHTML = results.map((r, i) => {
+    const ok = r.status === 'fulfilled' && r.value.database === 'ok';
+    const info = ok ? r.value.database_info : (r.status === 'rejected' ? 'unreachable' : r.value.database_info || 'error');
+    return `<div class="card health-card">
+      <div class="health-dot ${ok ? 'ok' : 'err'}"></div>
+      <div class="health-info">
+        <div class="name">Instance ${i+1} (:${PORTS[i]})</div>
+        <div class="detail">${ok ? 'DB: ' + info : info}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── progress ──
+async function loadProgress() {
+  try {
+    const r = await fetch(BASE + '/api/progress');
+    const d = await r.json();
+    document.getElementById('totalPapers').textContent = fmt(d.total);
+    const pct = d.completion_pct || 0;
+    document.getElementById('progressFill').style.width = Math.max(pct, 2) + '%';
+    document.getElementById('progressPct').textContent = pct + '%';
+    const completed = d.by_status?.completed || 0;
+    document.getElementById('progressSub').textContent = `${fmt(completed)} completed / ${fmt(d.total)} total`;
+
+    // status breakdown
+    const sb = document.getElementById('statusBreakdown');
+    const entries = Object.entries(d.by_status || {}).sort((a,b) => b[1]-a[1]);
+    sb.innerHTML = entries.length ? entries.map(([s, c]) =>
+      `<div class="status-row"><span><span class="badge ${s}">${s}</span></span><span>${fmt(c)}</span></div>`
+    ).join('') : '<div class="status-row"><span>No data</span></div>';
+
+    // by instance
+    const ib = document.getElementById('instanceBody');
+    const insts = Object.entries(d.by_instance || {});
+    ib.innerHTML = insts.length ? insts.map(([name, st]) =>
+      `<tr><td>${name}</td><td>${fmt(st.processing)}</td><td>${fmt(st.completed)}</td><td>${fmt(st.failed)}</td><td>${fmt(st.skipped)}</td></tr>`
+    ).join('') : '<tr><td colspan="5">No instance data</td></tr>';
+  } catch(e) { console.error('progress', e); }
+}
+
+// ── stats ──
+async function loadStats() {
+  try {
+    const r = await fetch(BASE + '/api/stats');
+    const d = await r.json();
+    const labels = {
+      papers: 'Papers', studies: 'Studies', varieties: 'Varieties',
+      varieties_flat: 'Varieties Flat', classification: 'Classification',
+      validation_issues: 'Validation', paper_status: 'Paper Status', pdf_missing: 'PDF Missing'
+    };
+    document.getElementById('statsCards').innerHTML = Object.entries(labels).map(([k, label]) =>
+      `<div class="card"><h3>${label}</h3><div class="value">${fmt(d[k])}</div></div>`
+    ).join('');
+  } catch(e) { console.error('stats', e); }
+}
+
+// ── jobs ──
+async function loadJobs() {
+  try {
+    const r = await fetch(BASE + '/api/jobs');
+    const jobs = await r.json();
+    const jb = document.getElementById('jobsBody');
+    if (!jobs.length) { jb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No jobs yet</td></tr>'; return; }
+    jb.innerHTML = jobs.reverse().map(j => {
+      const stats = j.stats ? `${j.stats.completed||0} ok / ${j.stats.failed||0} fail / ${j.stats.skipped||0} skip` : '--';
+      return `<tr>
+        <td title="${j.job_id}">${shortId(j.job_id)}</td>
+        <td>${j.step || '--'}</td>
+        <td><span class="badge ${j.status}">${j.status}</span></td>
+        <td>${stats}</td>
+        <td>${fmtTime(j.started_at)}</td>
+        <td>${fmtTime(j.finished_at)}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) { console.error('jobs', e); }
+}
+
+// ── paper status ──
+async function loadPaperStatus() {
+  const filter = document.getElementById('statusFilter').value;
+  const url = BASE + '/api/status?limit=50' + (filter ? `&status=${filter}` : '');
+  try {
+    const r = await fetch(url);
+    const papers = await r.json();
+    document.getElementById('paperCount').textContent = `${papers.length} records`;
+    const pb = document.getElementById('papersBody');
+    if (!papers.length) { pb.innerHTML = '<tr><td colspan="7" style="color:var(--muted)">No records</td></tr>'; return; }
+    pb.innerHTML = papers.map(p => `<tr>
+      <td title="${p.paper_id}">${shortId(p.paper_id)}</td>
+      <td title="${p.title || ''}">${(p.title || '--').substring(0, 50)}</td>
+      <td>${p.target_step || '--'}</td>
+      <td><span class="badge ${p.status}">${p.status}</span></td>
+      <td>${p.duration_sec ? p.duration_sec.toFixed(1) + 's' : '--'}</td>
+      <td title="${p.error_message || ''}" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.error_message || '--'}</td>
+      <td>${fmtTime(p.updated_at)}</td>
+    </tr>`).join('');
+  } catch(e) { console.error('papers', e); }
+}
+
+// ── trigger ──
+async function triggerRun() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  const body = { step: document.getElementById('runStep').value };
+  const limit = document.getElementById('runLimit').value;
+  if (limit) body.limit = parseInt(limit);
+  const kw = document.getElementById('runKeywords').value.trim();
+  if (kw) body.keywords = kw.split(',').map(s => s.trim()).filter(Boolean);
+  const yr = document.getElementById('runYear').value.trim();
+  if (yr) body.year_range = yr;
+
+  try {
+    const r = await fetch(BASE + '/api/run', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    toast(`Job started: ${d.job_id?.substring(0,8)}... (${body.step})`, true);
+    setTimeout(loadJobs, 1000);
+  } catch(e) {
+    toast('Failed to trigger: ' + e.message, false);
+  }
+  btn.disabled = false;
+}
+
+// ── refresh loop ──
+async function refreshAll() {
+  const dot = document.getElementById('refreshDot');
+  try {
+    await Promise.all([loadHealth(), loadProgress(), loadStats(), loadJobs(), loadPaperStatus()]);
+    dot.className = 'dot';
+    document.getElementById('refreshTime').textContent = new Date().toLocaleTimeString('zh-CN', {hour12: false});
+  } catch(e) {
+    dot.className = 'dot off';
+  }
+}
+
+refreshAll();
+setInterval(refreshAll, 10000);
+</script>
+</body>
+</html>
