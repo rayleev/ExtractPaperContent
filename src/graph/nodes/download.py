@@ -38,7 +38,7 @@ def download_node(state: PaperState, config: AppConfig, ss_client) -> dict:
     # ── 解析 paper identifier（paperId 或 DOI）──
     s2_paper_id = (
         paper_meta.get("paperId")
-        or paper_meta.get("paper_id")
+        or paper_meta.get("ss_paper_id")
         or ""
     )
     doi = paper_meta.get("doi", "")
