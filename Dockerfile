@@ -1,5 +1,9 @@
 FROM python:3.11-slim
 
+# 替换 Debian 源为阿里云镜像（国内加速）
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true
+
 # 系统依赖（psycopg2 需要 libpq）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
@@ -11,7 +15,8 @@ WORKDIR /app
 
 # 先复制依赖文件，利用 Docker 缓存层
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 
 # 复制项目代码
 COPY src/ src/
