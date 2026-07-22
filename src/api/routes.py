@@ -144,7 +144,7 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
                 return
 
         # ── 处理阶段 ──
-        mineru_client = None
+        mineru_client = MinerUClient(config.mineru)
         geocoder = Geocoder(config) if config.geocoding.enabled else None
 
         _update_job(job_id, step=request.step)

@@ -83,8 +83,15 @@ def parse_node(
                 save_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(save_path, "w", encoding="utf-8") as f:
                     f.write(md_text)
+        elif pdf_path:
+            logger.warning(f"  [{pid[:25]}] PDF not found at: {pdf_path}")
+        else:
+            logger.warning(f"  [{pid[:25]}] No pdf_path in paper_meta, cannot parse")
+    elif not md_text and not mineru_client:
+        logger.warning(f"  [{pid[:25]}] MinerU client not available, skipping PDF parse")
 
     if not md_text:
+        logger.warning(f"  [{pid[:25]}] Parse failed: no text available")
         return {
             "errors": state.get("errors", []) + [
                 {"node": "parse", "error": "No text available", "timestamp": datetime.now().isoformat()}
