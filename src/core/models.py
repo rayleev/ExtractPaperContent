@@ -224,64 +224,191 @@ class ExtractionResult(BaseModel):
         for study in self.studies:
             for v in study.varieties:
                 if v.yield_raw_value is not None and v.yield_raw_unit:
-                    v.yield_standard_value = _convert_yield(v.yield_raw_value, v.yield_raw_unit)
+                    v.yield_standard_value = _convert_yield(
+                        v.yield_raw_value, v.yield_raw_unit,
+                        plot_size=study.plot_size or "",
+                        planting_density=study.planting_density or "",
+                    )
                     v.yield_standard_unit = "kg/ha"
 
 
-def _convert_yield(value: float, unit: str) -> Optional[float]:
+# ── 产量单位组合式换算 ──────────────────────────────────────
+# 策略：将单位拆解为"质量/面积"两部分，各自独立查系数，
+#       计算 value × mass_factor / area_factor。
+#       非标准面积单位（plot/株/pot）用 plot_size / planting_density 辅助换算。
+
+# 质量词表 → kg
+_MASS_TO_KG = {
+    "g": 0.001, "kg": 1.0, "t": 1000.0, "ton": 1000.0, "tonne": 1000.0,
+    "mg": 1e-6, "Mg": 1000.0,  # Mg = 兆克 = 公吨
+    "斤": 0.5, "公斤": 1.0, "lb": 0.453592,
+}
+
+# 面积词表 → ha
+_AREA_TO_HA = {
+    "m2": 0.0001, "平方米": 0.0001,
+    "ha": 1.0, "hm2": 1.0, "公顷": 1.0,
+    "亩": 1.0 / 15.0, "mu": 1.0 / 15.0, "667m2": 1.0 / 15.0,
+    "acre": 0.404686,
+}
+
+# 需要上下文辅助的非标准"面积"单位
+_CONTEXT_PLOT = {"plot", "小区"}
+_CONTEXT_PLANT = {"plant", "株", "pot", "盆", "ear", "穗", "hill", "穴", "棵"}
+
+
+def _normalize_unit(unit: str) -> str:
     """
-    将产量值换算为 kg/ha。
+    归一化单位字符串，统一为 mass/area 格式。
 
-    策略：将单位拆解为"质量/面积"两部分，分别换算后计算结果。
-    支持的质量单位: kg, t(吨), g, 斤(=0.5kg)
-    支持的面积单位: ha, hm²(=ha), 亩(mu, =1/15 ha), m², 667m²(≈1亩)
-    无法可靠换算时返回 None（而非静默保留错误值）。
+    处理: kg·ha⁻¹ → kg/ha,  kg·hm⁻² → kg/hm2,  g m⁻² → g/m2,
+          kg per ha → kg/ha,  Unicode 上标 → ASCII
     """
-    u = unit.strip().lower().replace(" ", "")
+    u = unit.strip()
+    # ·Y⁻¹ / 空格Y⁻¹ → /Y （如 kg·ha⁻¹ → kg/ha）
+    u = re.sub(r'[·⋅\s]+(\S+)⁻¹$', r'/\1', u)
+    # ·Y⁻² / 空格Y⁻² → /Y2 （如 kg·hm⁻² → kg/hm2, g·m⁻² → g/m2）
+    u = re.sub(r'[·⋅\s]+(\S+)⁻²$', r'/\g<1>2', u)
+    # "per" 关键词 → /
+    u = re.sub(r'\s+per\s+', '/', u, flags=re.IGNORECASE)
+    # 剩余 Unicode 上标转 ASCII
+    u = u.replace("²", "2").replace("³", "3")
+    # 去空格
+    u = u.replace(" ", "")
+    return u
 
-    # ── 精确匹配常见完整单位 ──
-    exact_map = {
-        # kg/ha 系列（1 ha = 1 hm²）
-        "kg/ha": 1.0, "kg/hm²": 1.0, "kg/hm2": 1.0,
-        "kg·hm⁻²": 1.0, "kg·hm-2": 1.0,
-        # t/ha 系列
-        "t/ha": 1000.0, "t/hm²": 1000.0, "t/hm2": 1000.0,
-        "t·hm⁻²": 1000.0, "t·hm-2": 1000.0,
-        "ton/ha": 1000.0, "tonne/ha": 1000.0,
-        # g/ha 系列
-        "g/ha": 0.001, "g/hm²": 0.001,
-        # kg/亩 系列（1 ha = 15 亩 → 1 kg/亩 = 15 kg/ha）
-        "kg/亩": 15.0, "kg/mu": 15.0,
-        # 斤/亩（1 斤 = 0.5 kg → 0.5 × 15 = 7.5 kg/ha）
-        "斤/亩": 7.5,
-        # kg/667m²（≈ 1 亩 → 同 kg/亩）
-        "kg/667m²": 15.0, "kg/667m2": 15.0,
-    }
 
-    if u in exact_map:
-        return round(value * exact_map[u], 2)
+def _match_mass(s: str) -> Optional[float]:
+    """匹配质量单位，返回 → kg 的换算系数。支持中文数字前缀（万）。"""
+    wan = 1.0
+    if s.startswith("万"):
+        wan = 10000.0
+        s = s[1:]
+    # 精确匹配（区分 Mg 和 mg）
+    if s in _MASS_TO_KG:
+        return _MASS_TO_KG[s] * wan
+    # 忽略大小写（处理 KG, T 等变体，但排除 Mg/mg 混淆）
+    sl = s.lower()
+    if sl == "mg":
+        return 1e-6 * wan
+    for k, v in _MASS_TO_KG.items():
+        if k.lower() == sl:
+            return v * wan
+    return None
 
-    # ── 模糊匹配：包含关键词 ──
-    # 亩/mu → × 15
-    if "亩" in u or "/mu" in u:
-        if "kg" in u or "公斤" in u:
-            return round(value * 15, 2)
-        if "斤" in u:
-            return round(value * 7.5, 2)
-        if u.startswith("t") or "吨" in u:
-            return round(value * 15000, 2)  # t/亩 → t/ha × 15
 
-    # hm² 或公顷 → 等同于 ha
-    if "hm" in u or "公顷" in u:
-        if "kg" in u or "公斤" in u:
-            return round(value, 2)
-        if u.startswith("t") or "吨" in u:
-            return round(value * 1000, 2)
-        if u.startswith("g"):
-            return round(value * 0.001, 2)
+def _match_area(s: str) -> Optional[float]:
+    """匹配面积单位，返回 → ha 的换算系数。"""
+    if s in _AREA_TO_HA:
+        return _AREA_TO_HA[s]
+    sl = s.lower()
+    for k, v in _AREA_TO_HA.items():
+        if k.lower() == sl:
+            return v
+    return None
 
-    # 无法可靠换算的单位 — 返回 None 而非静默保留
-    # 常见的不可换算单位: g/株, g/plant, kg/plot, g/pot 等
+
+def _parse_plot_size_m2(s: str) -> Optional[float]:
+    """从自由文本中提取小区面积，统一为 m²。如 '13.3 m²' → 13.3, '0.002 ha' → 20.0"""
+    if not s:
+        return None
+    m = re.search(r'(\d+\.?\d*)\s*(m²|m2|平方米|ha|hm²|hm2|公顷|亩)', s)
+    if not m:
+        return None
+    val = float(m.group(1))
+    unit = m.group(2)
+    if unit in ("m²", "m2", "平方米"):
+        return val
+    if unit in ("ha", "hm²", "hm2", "公顷"):
+        return val * 10000
+    if unit == "亩":
+        return val * 666.67
+    return None
+
+
+def _parse_density_per_ha(s: str) -> Optional[float]:
+    """
+    从自由文本中提取种植密度，统一为 穴(株)/ha。
+
+    支持两种格式:
+      1. 间距: '30×12 cm' → 10000/(0.30×0.12) ≈ 277778 穴/ha
+      2. 密度: '22.5万穴/公顷' → 225000, '30万株/hm²' → 300000, '15000株/亩' → 225000
+    """
+    if not s:
+        return None
+    # 1. 间距格式: 30×12 cm, 30x12cm, 30*12 厘米
+    m = re.search(r'(\d+\.?\d*)\s*[×xX*]\s*(\d+\.?\d*)\s*(cm|厘米|cm²)', s)
+    if m:
+        a, b = float(m.group(1)), float(m.group(2))
+        if a > 0 and b > 0:
+            area_per_plant_m2 = (a / 100.0) * (b / 100.0)
+            return 10000.0 / area_per_plant_m2
+    # 2. 密度格式: 22.5万穴/公顷, 225000株/ha, 15000棵/亩
+    m = re.search(r'(\d+\.?\d*)\s*(万)?\s*(穴|株|plant|hill|棵)\s*/?\s*(公顷|ha|hm²|hm2|亩)?', s, re.IGNORECASE)
+    if m:
+        val = float(m.group(1))
+        if m.group(2):  # "万" 前缀
+            val *= 10000
+        area_unit = m.group(4) or "公顷"  # 默认按公顷
+        if area_unit in ("公顷", "ha", "hm²", "hm2"):
+            return val
+        if area_unit == "亩":
+            return val * 15  # 穴/亩 → 穴/ha
+    return None
+
+
+def _convert_yield(
+    value: float,
+    unit: str,
+    plot_size: str = "",
+    planting_density: str = "",
+) -> Optional[float]:
+    """
+    将产量值换算为 kg/ha（组合式解析）。
+
+    三层策略:
+      1. 组合式解析: 拆 mass/area，各自查系数 → value × mass_factor / area_factor
+         覆盖: kg/ha, t/ha, g/m², Mg·ha⁻¹, kg/亩, 斤/亩, kg/667m² 等所有标准组合
+      2. 上下文辅助: per-plot/per-plant 单位 + plot_size/planting_density → 换算
+         覆盖: kg/plot + plot_size="13.3 m²", g/株 + planting_density="22.5万穴/公顷"
+      3. 不可转换: 返回 None（保留 raw 值，后续可标记）
+    """
+    u = _normalize_unit(unit)
+
+    # ── 拆分 mass/area ──
+    if "/" not in u:
+        return None
+    mass_str, area_str = u.split("/", 1)
+    if not mass_str or not area_str:
+        return None
+
+    mass_factor = _match_mass(mass_str)
+    if mass_factor is None:
+        return None
+
+    # ── 第 1 层: 标准面积单位 → 直接换算 ──
+    area_factor = _match_area(area_str)
+    if area_factor is not None:
+        return round(value * mass_factor / area_factor, 2)
+
+    # ── 第 2 层: 非标准面积 → 上下文辅助 ──
+    area_lower = area_str.lower()
+
+    # kg/plot, g/小区 → 需要 plot_size
+    if area_lower in _CONTEXT_PLOT:
+        plot_m2 = _parse_plot_size_m2(plot_size)
+        if plot_m2 and plot_m2 > 0:
+            # value [mass/plot] × mass_factor [kg/mass] × (10000 m²/ha / plot_m2) [plot/ha]
+            return round(value * mass_factor * (10000.0 / plot_m2), 2)
+
+    # g/株, kg/plant, g/pot → 需要 planting_density
+    if area_lower in _CONTEXT_PLANT:
+        density = _parse_density_per_ha(planting_density)
+        if density and density > 0:
+            # value [mass/plant] × mass_factor [kg/mass] × density [plant/ha]
+            return round(value * mass_factor * density, 2)
+
+    # ── 第 3 层: 不可转换 ──
     return None
 
 

@@ -53,6 +53,7 @@ class BatchOrchestrator:
         ss_client=None,
         max_concurrent: int = 10,
         stop_after: str = "",
+        stop_event: Optional[threading.Event] = None,
     ):
         self.config = config
         self.llm = llm
@@ -61,6 +62,7 @@ class BatchOrchestrator:
         self.ss_client = ss_client
         self.max_concurrent = max_concurrent
         self.stop_after = stop_after  # 分步执行：在此节点后停止（空 = 完整流程）
+        self.stop_event = stop_event  # 外部停止信号（/api/stop 设置）
 
         # Checkpoint 路径（LangGraph 断点续跑）
         self.checkpoint_path = str(config.cache_path / "langgraph_checkpoint.db")
@@ -432,6 +434,14 @@ class BatchOrchestrator:
         chunk_num = 0
 
         while True:
+            # ── 检查外部停止信号 ──
+            if self.stop_event and self.stop_event.is_set():
+                logger.info(
+                    f"Stop signal detected — halting after {chunk_num} chunks "
+                    f"({total_claimed} papers claimed)"
+                )
+                break
+
             chunk_num += 1
 
             # ── 原子领取一块 pending 论文（含元数据）──

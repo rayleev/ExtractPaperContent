@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import uuid
 from datetime import datetime
@@ -17,7 +18,7 @@ from typing import Dict, Optional
 from fastapi import APIRouter, HTTPException
 
 from src.api.schemas import (
-    RunRequest, RunResponse, JobStatus,
+    RunRequest, RunResponse, JobStatus, StopResponse,
     TableStats, PaperStatusResponse, ProgressResponse,
 )
 
@@ -29,6 +30,9 @@ router = APIRouter(prefix="/api", tags=["pipeline"])
 
 _jobs: Dict[str, dict] = {}
 _jobs_lock = threading.Lock()
+
+# 全局停止标志：/api/stop 设置，BatchOrchestrator 在分块循环中检查
+_stop_event = threading.Event()
 
 
 def _get_job(job_id: str) -> Optional[dict]:
@@ -156,6 +160,7 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
             ss_client=ss_client,
             max_concurrent=config.concurrency.extract_workers,
             stop_after=stop_after,
+            stop_event=_stop_event,
         )
 
         if request.step in ("search", "all"):
@@ -189,6 +194,17 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
 
             stats = orchestrator.process_batch(papers=papers)
 
+        # 检查是否被用户停止
+        if _stop_event.is_set():
+            _update_job(job_id,
+                status="stopped",
+                step=request.step,
+                stats=stats,
+                finished_at=datetime.now().isoformat(),
+                message="用户手动停止",
+            )
+            return
+
         _update_job(job_id,
             status="completed",
             step=request.step,
@@ -218,6 +234,9 @@ def trigger_run(request: RunRequest):
     """
     job_id = str(uuid.uuid4())
 
+    # 新任务启动前清除停止标志（防止上次 stop 影响新任务）
+    _stop_event.clear()
+
     with _jobs_lock:
         _jobs[job_id] = {
             "job_id": job_id,
@@ -242,6 +261,54 @@ def trigger_run(request: RunRequest):
         job_id=job_id,
         status="accepted",
         message=f"Pipeline '{request.step}' started in background",
+    )
+
+
+@router.post("/stop", response_model=StopResponse)
+def stop_pipeline():
+    """
+    停止当前正在运行的 pipeline。
+
+    设置全局停止标志，BatchOrchestrator 在完成当前分块后停止领取新论文。
+    同时将 processing 状态的论文重置为 pending，以便后续重新处理。
+    """
+    _stop_event.set()
+    logger.info("Stop signal received — pipeline will halt after current chunk")
+
+    # 将本实例正在处理的论文重置为 pending（其他实例自行重置）
+    reset_count = 0
+    try:
+        from src.config import load_config
+        from src.graph.output import get_connection
+
+        config = load_config()
+        instance_id = os.environ.get("INSTANCE_ID", "default")
+        conn = get_connection(config.database.connection_string)
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE paper_status SET status = 'pending', claimed_by = NULL, updated_at = %s "
+                "WHERE status = 'processing' AND claimed_by = %s",
+                (datetime.now().isoformat(), instance_id),
+            )
+            reset_count = cur.rowcount
+        conn.commit()
+        conn.close()
+        logger.info(f"Reset {reset_count} processing papers to pending (instance={instance_id})")
+    except Exception as e:
+        logger.error(f"Failed to reset processing papers: {e}")
+
+    # 将内存中 running 状态的任务标记为 stopped
+    with _jobs_lock:
+        for job in _jobs.values():
+            if job["status"] in ("running", "accepted"):
+                job["status"] = "stopped"
+                job["finished_at"] = datetime.now().isoformat()
+                job["message"] = "用户手动停止"
+
+    return StopResponse(
+        status="stopped",
+        message=f"停止信号已发送，当前分块处理完后停止。已重置 {reset_count} 篇 processing 论文为 pending。",
+        reset_count=reset_count,
     )
 
 

@@ -45,6 +45,16 @@ def geocode_node(state: PaperState, config: AppConfig, geocoder: Geocoder) -> di
         if lat is not None and lon is not None:
             study["geo_source"] = "paper"
             skipped_count += 1
+            # 有经纬度但缺海拔 → 仍尝试补充（论文通常只写经纬度不写海拔）
+            if study.get("altitude") is None:
+                region = study.get("site_administrative_region", "") or ""
+                site = study.get("experimental_site_name", "") or ""
+                alt = geocoder._free_altitude(lat, lon)
+                if alt is not None:
+                    study["altitude"] = alt
+                    logger.debug(f"  [{pid[:25]}] Altitude from API: {alt}m")
+                else:
+                    _supplement_altitude_from_province(study, region, site)
             continue
 
         region = study.get("site_administrative_region", "") or ""

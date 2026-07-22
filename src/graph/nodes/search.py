@@ -42,6 +42,10 @@ def _make_paper_id(title: str) -> str:
 def _convert_ss_paper(sp: dict) -> dict:
     """将 Semantic Scholar API 返回的论文记录转换为内部 paper dict 格式。"""
     title = sp.get("title", "")
+    # SS API journal 字段可能是字符串或对象 {name, volume, pages}
+    journal_raw = sp.get("journal", "")
+    if isinstance(journal_raw, dict):
+        journal_raw = journal_raw.get("name", "")
     return {
         "paper_id": _make_paper_id(title),
         "ss_paper_id": sp.get("paperId", ""),
@@ -50,7 +54,7 @@ def _convert_ss_paper(sp: dict) -> dict:
         "abstract": sp.get("abstract", ""),
         "keywords": sp.get("keywords", ""),
         "year": str(sp.get("publicationYear") or sp.get("publication_year") or ""),
-        "journal": sp.get("journal", ""),
+        "journal": journal_raw or "",
         "language": "en",
     }
 

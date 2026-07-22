@@ -43,7 +43,7 @@ class RunResponse(BaseModel):
 class JobStatus(BaseModel):
     """单个任务的进度状态。"""
     job_id: str
-    status: str = Field(description="pending/running/completed/failed")
+    status: str = Field(description="pending/running/completed/failed/stopped")
     step: str = Field(default="", description="当前运行的步骤")
     stats: Optional[dict] = Field(
         default=None,
@@ -52,6 +52,14 @@ class JobStatus(BaseModel):
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     error: Optional[str] = None
+    message: str = Field(default="", description="附加信息（如停止原因）")
+
+
+class StopResponse(BaseModel):
+    """停止 pipeline 的响应。"""
+    status: str = Field(description="stopped / no_running_jobs")
+    message: str = Field(default="", description="附加信息")
+    reset_count: int = Field(default=0, description="从 processing 重置为 pending 的论文数")
 
 
 class TableStats(BaseModel):

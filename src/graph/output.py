@@ -26,6 +26,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -502,6 +503,8 @@ def insert_extraction(conn, result: dict, paper_id: str):
     paper = extraction.get("paper", {})
     studies = extraction.get("studies", [])
     meta = result.get("paper_meta", {})
+    cls = result.get("classification", {})  # language/category 在分类子字典中
+    extracted_at = result.get("extracted_at") or datetime.now().isoformat()
 
     with conn.cursor() as cur:
         # ── papers 表 ──
@@ -523,12 +526,12 @@ def insert_extraction(conn, result: dict, paper_id: str):
             int(meta["year"]) if meta.get("year", "").isdigit() else paper.get("publication_year"),
             meta.get("journal") or paper.get("journal_name"),
             paper.get("crop_species"),
-            result.get("language"),
-            result.get("category"),
+            cls.get("language"),
+            cls.get("category"),
             paper.get("data_file_link"),
             paper.get("data_file_description"),
             paper.get("data_file_version"),
-            result.get("extracted_at"),
+            extracted_at,
         ))
 
         # ── studies 表 ──
@@ -620,7 +623,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     meta.get("title") or paper.get("paper_title"),
                     int(meta["year"]) if meta.get("year", "").isdigit() else paper.get("publication_year"),
                     meta.get("journal") or paper.get("journal_name"),
-                    paper.get("crop_species"), result.get("language"), result.get("category"),
+                    paper.get("crop_species"), cls.get("language"), cls.get("category"),
                     study.get("study_title"), study.get("trial_year"),
                     study.get("sowing_date"), study.get("harvest_date"),
                     study.get("country"), study.get("site_administrative_region"),
@@ -638,7 +641,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     v.get("yield_standard_unit", "kg/ha"), v.get("yield_value_type"),
                     v.get("significance_group"), v.get("pct_over_check"),
                     v.get("measurement_method"), v.get("source_location"),
-                    v.get("confidence_level"), result.get("extracted_at"),
+                    v.get("confidence_level"), extracted_at,
                 ))
 
     conn.commit()

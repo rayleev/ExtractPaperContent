@@ -61,6 +61,7 @@
   .badge.skipped { background: #f3e5f5; color: #6a1b9a; }
   .badge.running { background: #e3f2fd; color: #1565c0; }
   .badge.accepted { background: #fff8e1; color: #f57f17; }
+  .badge.stopped { background: #efebe9; color: #4e342e; }
 
   /* status breakdown */
   .status-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; border-bottom: 1px solid #f0ede6; }
@@ -82,6 +83,8 @@
   .btn-primary { background: var(--accent); color: #fff; }
   .btn-primary:hover { background: #4a7a59; }
   .btn-primary:disabled { background: #b0c4b8; cursor: not-allowed; }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-danger:hover { background: #a93226; }
   .btn-sm { padding: 4px 12px; font-size: 12px; }
 
   /* section title */
@@ -171,6 +174,7 @@
         <input type="text" id="runYear" placeholder="2020-2025" style="width:110px">
       </div>
       <button class="btn btn-primary" id="runBtn" onclick="triggerRun()">Run</button>
+      <button class="btn btn-danger" id="stopBtn" onclick="stopAll()">Stop All</button>
     </div>
   </div>
 
@@ -178,8 +182,8 @@
   <div class="section-title">Jobs</div>
   <div class="card">
     <table>
-      <thead><tr><th>Job ID</th><th>Step</th><th>Status</th><th>Stats</th><th>Started</th><th>Finished</th></tr></thead>
-      <tbody id="jobsBody"><tr><td colspan="6">Loading...</td></tr></tbody>
+      <thead><tr><th>Job ID</th><th>Instance</th><th>Step</th><th>Status</th><th>Stats</th><th>Started</th><th>Finished</th><th>Action</th></tr></thead>
+      <tbody id="jobsBody"><tr><td colspan="8">Loading...</td></tr></tbody>
     </table>
   </div>
 
@@ -288,22 +292,38 @@ async function loadStats() {
   } catch(e) { console.error('stats', e); }
 }
 
-// ── jobs ──
+// ── jobs (multi-instance) ──
 async function loadJobs() {
+  const jb = document.getElementById('jobsBody');
   try {
-    const r = await fetch(BASE + '/api/jobs');
-    const jobs = await r.json();
-    const jb = document.getElementById('jobsBody');
-    if (!jobs.length) { jb.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">No jobs yet</td></tr>'; return; }
-    jb.innerHTML = jobs.reverse().map(j => {
+    const results = await Promise.allSettled(
+      PORTS.map(p => fetch(`http://${window.location.hostname}:${p}/api/jobs`).then(r => r.json()))
+    );
+    // 合并所有实例的 jobs，标记来源端口
+    let allJobs = [];
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled' && Array.isArray(r.value)) {
+        r.value.forEach(j => { j._port = PORTS[i]; allJobs.push(j); });
+      }
+    });
+    if (!allJobs.length) { jb.innerHTML = '<tr><td colspan="8" style="color:var(--muted)">No jobs yet</td></tr>'; return; }
+    // 按开始时间倒序
+    allJobs.sort((a, b) => (b.started_at || '').localeCompare(a.started_at || ''));
+    jb.innerHTML = allJobs.map(j => {
       const stats = j.stats ? `${j.stats.completed||0} ok / ${j.stats.failed||0} fail / ${j.stats.skipped||0} skip` : '--';
+      const isActive = j.status === 'running' || j.status === 'accepted';
+      const stopBtn = isActive
+        ? `<button class="btn btn-danger btn-sm" onclick="stopInstance(${j._port})">Stop</button>`
+        : '--';
       return `<tr>
         <td title="${j.job_id}">${shortId(j.job_id)}</td>
+        <td>:${j._port}</td>
         <td>${j.step || '--'}</td>
         <td><span class="badge ${j.status}">${j.status}</span></td>
         <td>${stats}</td>
         <td>${fmtTime(j.started_at)}</td>
         <td>${fmtTime(j.finished_at)}</td>
+        <td>${stopBtn}</td>
       </tr>`;
     }).join('');
   } catch(e) { console.error('jobs', e); }
@@ -331,7 +351,7 @@ async function loadPaperStatus() {
   } catch(e) { console.error('papers', e); }
 }
 
-// ── trigger ──
+// ── trigger (multi-instance) ──
 async function triggerRun() {
   const btn = document.getElementById('runBtn');
   btn.disabled = true;
@@ -343,19 +363,47 @@ async function triggerRun() {
   const yr = document.getElementById('runYear').value.trim();
   if (yr) body.year_range = yr;
 
-  try {
-    const r = await fetch(BASE + '/api/run', {
+  // 向所有实例发送运行请求
+  const results = await Promise.allSettled(
+    PORTS.map(p => fetch(`http://${window.location.hostname}:${p}/api/run`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body),
-    });
-    const d = await r.json();
-    toast(`Job started: ${d.job_id?.substring(0,8)}... (${body.step})`, true);
-    setTimeout(loadJobs, 1000);
-  } catch(e) {
-    toast('Failed to trigger: ' + e.message, false);
+    }).then(r => r.json()))
+  );
+  const okCount = results.filter(r => r.status === 'fulfilled').length;
+  if (okCount > 0) {
+    toast(`${okCount}/${PORTS.length} instances started (${body.step})`, true);
+  } else {
+    toast('All instances failed to start', false);
   }
+  setTimeout(loadJobs, 1000);
   btn.disabled = false;
+}
+
+// ── stop ──
+async function stopAll() {
+  const btn = document.getElementById('stopBtn');
+  btn.disabled = true;
+  const results = await Promise.allSettled(
+    PORTS.map(p => fetch(`http://${window.location.hostname}:${p}/api/stop`, { method: 'POST' }).then(r => r.json()))
+  );
+  const okCount = results.filter(r => r.status === 'fulfilled').length;
+  const totalReset = results.reduce((sum, r) => sum + (r.status === 'fulfilled' ? (r.value.reset_count || 0) : 0), 0);
+  toast(`Stop sent to ${okCount}/${PORTS.length} instances, ${totalReset} papers reset`, okCount > 0);
+  setTimeout(() => { loadJobs(); loadPaperStatus(); }, 1000);
+  btn.disabled = false;
+}
+
+async function stopInstance(port) {
+  try {
+    const r = await fetch(`http://${window.location.hostname}:${port}/api/stop`, { method: 'POST' });
+    const d = await r.json();
+    toast(`Instance :${port} stopped, ${d.reset_count || 0} papers reset`, true);
+    setTimeout(() => { loadJobs(); loadPaperStatus(); }, 1000);
+  } catch(e) {
+    toast(`Failed to stop :${port} — ${e.message}`, false);
+  }
 }
 
 // ── refresh loop ──
