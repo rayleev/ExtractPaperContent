@@ -29,6 +29,10 @@ def filter_node(state: PaperState, config: AppConfig) -> dict:
         and country in ("China", "CN", "")
     )
 
+    result = {
+        "is_extractable": is_extractable,
+        "status": "filtered" if is_extractable else "skipped",
+    }
     if is_extractable:
         logger.info(f"  [{pid[:25]}] Filter PASS: category={category}, country={country or 'N/A'}")
     else:
@@ -38,8 +42,6 @@ def filter_node(state: PaperState, config: AppConfig) -> dict:
             else f"country '{country}' not China"
         )
         logger.info(f"  [{pid[:25]}] Filter SKIP: {reason}")
+        result["errors"] = [{"node": "filter", "error": reason}]
 
-    return {
-        "is_extractable": is_extractable,
-        "status": "filtered" if is_extractable else "skipped",
-    }
+    return result

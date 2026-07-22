@@ -283,6 +283,7 @@ class BatchOrchestrator:
             initial_state["is_extractable"] = category in extractable_cats
             if not initial_state["is_extractable"]:
                 initial_state["status"] = "skipped"
+                initial_state["errors"] = [{"node": "filter", "error": f"category '{category}' not in extractable list"}]
                 return initial_state
             initial_state["status"] = "filtered"
 
@@ -385,10 +386,15 @@ class BatchOrchestrator:
                 )
         elif status == "skipped":
             self.stats["skipped"] += 1
+            skip_reason = ""
+            errs = result.get("errors", [])
+            if errs:
+                skip_reason = str(errs[-1].get("error", ""))[:500]
             with self._db_lock:
                 update_paper_status(
                     self.db_conn, pid, title, target_step,
-                    "skipped", duration, run_id=self.config.run_id,
+                    "skipped", duration, error_message=skip_reason,
+                    run_id=self.config.run_id,
                 )
         else:
             self.stats["failed"] += 1
