@@ -26,7 +26,7 @@ from src.core.geocoder import Geocoder
 from src.graph.state import PaperState
 from src.graph.graph import build_paper_graph
 from src.graph.output import (
-    init_database,
+    get_connection,
     insert_extraction,
     insert_classification,
     insert_validation,
@@ -76,7 +76,7 @@ class BatchOrchestrator:
 
         # PostgreSQL 输出数据库（所有结果统一存储，含注册表功能）
         self._db_lock = threading.Lock()
-        self.db_conn = init_database(config.database.connection_string)
+        self.db_conn = get_connection(config.database.connection_string)
 
         # 多实例标识（用于任务领取 claim_tasks）
         self.instance_id = os.environ.get("INSTANCE_ID", "default")

@@ -114,9 +114,9 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
         if request.step in ("search", "all"):
             _update_job(job_id, step="search")
 
-            # 初始化 DB 连接（搜索入库需要）
-            from src.graph.output import init_database
-            search_conn = init_database(config.database.connection_string)
+            # 轻量 DB 连接（搜索入库需要，DDL 已在 startup 完成）
+            from src.graph.output import get_connection
+            search_conn = get_connection(config.database.connection_string)
 
             empty_state: PaperState = {"paper_id": "", "paper_meta": {}, "status": "pending", "errors": []}
             search_result = search_node(empty_state, config, ss_client, db_conn=search_conn, limit=request.limit)
