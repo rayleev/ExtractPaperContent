@@ -35,3 +35,7 @@ Thumbs.db
 # 临时文件
 *.tmp
 *.bak
+
+# 环境变量文件
+.env
+.config
