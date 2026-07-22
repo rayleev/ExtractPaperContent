@@ -341,6 +341,12 @@ class BatchOrchestrator:
         title = paper.get("title", "")[:80]
         status = result.get("status", "unknown")
 
+        # 分类结果实时入库（无论论文最终 completed / skipped / failed）
+        cls = result.get("classification")
+        if cls:
+            with self._db_lock:
+                insert_classification(self.db_conn, [cls])
+
         full_run_statuses = ("validated", "geocoded", "validated_complete")
         is_completed = (
             status in full_run_statuses
