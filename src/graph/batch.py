@@ -347,6 +347,21 @@ class BatchOrchestrator:
             with self._db_lock:
                 insert_classification(self.db_conn, [cls])
 
+        # PDF 缺失记录入库
+        if result.get("pdf_missing"):
+            meta = result.get("paper_meta", {})
+            reason = ""
+            errs = result.get("errors", [])
+            if errs:
+                reason = str(errs[-1].get("error", ""))[:500]
+            with self._db_lock:
+                insert_pdf_missing(
+                    self.db_conn, pid,
+                    title=meta.get("title", "")[:500],
+                    doi=meta.get("doi", ""),
+                    reason=reason,
+                )
+
         full_run_statuses = ("validated", "geocoded", "validated_complete")
         is_completed = (
             status in full_run_statuses
