@@ -48,6 +48,16 @@ def extract_phase2_node(
 
     prompt_template = _load_prompt("extract_study.txt")
 
+    # 按论文类别注入提取指令：
+    #   management_yield（管理/栽培措施型）→ 只提取对照组（CK/基准处理）数据
+    #   其他类别（如 varietal_yield）       → 不注入额外指令，提取所有品种
+    category = state.get("classification", {}).get("category", "")
+    if category == "management_yield":
+        category_instruction = _load_prompt("extract_study_management.txt")
+        logger.info(f"  [{pid[:25]}] Phase 2: management_yield → extract control group only")
+    else:
+        category_instruction = ""
+
     # 重新构建文档树以获取实际的实验章节节点
     tree = build_document_tree(md_text)
     actual_exp_sections = find_experiment_sections(tree)
@@ -85,6 +95,7 @@ def extract_phase2_node(
             year=paper_meta.get("year", ""),
             study_context=study_context,
             section_content=section_content,
+            category_instruction=category_instruction,
         )
 
         # LLM 调用 — 这是主要耗时步骤
