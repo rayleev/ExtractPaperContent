@@ -507,6 +507,14 @@ def insert_extraction(conn, result: dict, paper_id: str):
     extracted_at = result.get("extracted_at") or datetime.now().isoformat()
 
     with conn.cursor() as cur:
+        # ── 重跑整篇覆盖：先清空该论文的旧提取行（delete-then-insert）──
+        # upsert 在"新提取行数 < 旧行数"时会残留旧行（如 management_yield 改为
+        # 只提对照组后 variety 行数减少，高 variety_index 的旧处理行会留下成脏数据）。
+        # 故每次写入前按 paper_id 清空 studies/varieties/varieties_flat，再整篇插入。
+        # papers 表每个 paper_id 仅一行，直接 upsert 即可，无需删除。
+        for _table in ("varieties", "varieties_flat", "studies"):
+            cur.execute(f"DELETE FROM {_table} WHERE paper_id = %s", (paper_id,))
+
         # ── papers 表 ──
         # doi/title/year/journal 从搜索元数据直填（权威来源），crop_species 等从 LLM 取
         cur.execute("""
