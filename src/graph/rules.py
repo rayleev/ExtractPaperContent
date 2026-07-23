@@ -21,6 +21,16 @@ LAT_MIN, LAT_MAX = 18.0, 54.0
 LON_MIN, LON_MAX = 73.0, 135.0
 
 
+def _to_float(value):
+    """安全转 float：失败（如字符串 '北纬30°'）返回 None，避免比较时抛 TypeError。"""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return None
+
+
 def validate_extraction(extraction: dict, paper_meta: dict) -> dict:
     """
     对提取结果运行规则验证。
@@ -71,11 +81,15 @@ def validate_extraction(extraction: dict, paper_meta: dict) -> dict:
                 pass
 
         # 经纬度范围
-        lat = study.get("latitude")
-        lon = study.get("longitude")
+        raw_lat = study.get("latitude")
+        raw_lon = study.get("longitude")
+        lat = _to_float(raw_lat)
+        lon = _to_float(raw_lon)
         if lat is not None and lon is not None:
             if not (LAT_MIN <= lat <= LAT_MAX and LON_MIN <= lon <= LON_MAX):
                 warnings.append(f"{prefix}: 经纬度({lat}, {lon})超出中国范围")
+        elif (raw_lat is not None and lat is None) or (raw_lon is not None and lon is None):
+            warnings.append(f"{prefix}: 经纬度非数值（lat={raw_lat}, lon={raw_lon}），已忽略范围检查")
 
         # 多站点检测
         site_name = study.get("experimental_site_name", "") or ""

@@ -89,6 +89,45 @@ class VarietyYield(BaseModel):
         return None
 
 
+def _coerce_geo_float(value):
+    """
+    将 LLM 可能输出的经纬度/海拔值稳健地转换为 float。
+
+    LLM 有时会按 prompt 示例输出带格式的字符串（如 '北纬30.5°'、'东经114.3°'、
+    '30°N'、'约30.5'、'25m'、'1,234'），直接交给 Optional[float] 会导致 Pydantic
+    校验失败、进而使整篇论文回退甚至崩溃。这里统一解析为 float，解析不了返回 None
+    （交给 geocoder 后处理兜底），而不是抛异常。
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    s = str(value).strip()
+    if not s:
+        return None
+
+    # 方向判负：南纬/西经，或以 S/W 结尾（中国境内均为正，仅作通用兜底）
+    negative = ("南纬" in s) or ("西经" in s) or re.search(r"[SsWw]\s*$", s) is not None
+
+    # 去除中文方向词、度分秒符号、单位、近似词、千分位与空白
+    cleaned = s
+    for token in ("北纬", "南纬", "东经", "西经", "海拔", "约", "近似",
+                  "°", "º", "度", "′", "″", "'", '"',
+                  "N", "E", "S", "W", "n", "e", "s", "w",
+                  "米", "m", "M", ",", "，", " ", "\u3000"):
+        cleaned = cleaned.replace(token, "")
+
+    m = re.search(r"\d+(?:\.\d+)?", cleaned)
+    if not m:
+        return None
+    try:
+        num = float(m.group())
+    except ValueError:
+        return None
+    return -num if negative else num
+
+
 class StudyInfo(BaseModel):
     """试验级别信息 — 一篇论文可包含多个试验"""
     model_config = ConfigDict(extra="ignore")
@@ -113,6 +152,12 @@ class StudyInfo(BaseModel):
     cultural_practices: Optional[str] = Field(None, description="栽培管理措施描述")
     notes: Optional[str] = Field(None, description="[DO NOT FILL] 备注，系统自动生成的数据质量警告（如多站点标记），LLM无需填写")
     varieties: List[VarietyYield] = Field(default_factory=list, description="该试验中所有品种的产量记录")
+
+    @field_validator("latitude", "longitude", "altitude", mode="before")
+    @classmethod
+    def _coerce_geo_fields(cls, v):
+        """经纬度/海拔容错：把 '北纬30.5°' 之类的字符串解析为 float，解析不了置 None。"""
+        return _coerce_geo_float(v)
 
 
 class ExtractionResult(BaseModel):
