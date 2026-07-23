@@ -94,6 +94,7 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
             "parse": "parse",
             "extract": "",
             "all": "",
+            "process": "",  # 仅处理库中 pending 论文，不触发搜索
         }
         stop_after = step_to_stop.get(request.step, "")
 
@@ -163,7 +164,7 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
             stop_event=_stop_event,
         )
 
-        if request.step in ("search", "all"):
+        if request.step in ("search", "all", "process"):
             # DB 驱动：从 paper_status 分块拉取 pending 论文处理
             stats = orchestrator.process_from_db(chunk_size=100)
         else:

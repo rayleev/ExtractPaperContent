@@ -13,7 +13,7 @@ class RunRequest(BaseModel):
     """触发 pipeline 运行的请求体。"""
     step: str = Field(
         default="all",
-        description="运行步骤: search/classify/download/parse/extract/all",
+        description="运行步骤: search/classify/download/parse/extract/process/all（process=仅处理库中 pending 论文，不搜索）",
     )
     keywords: Optional[List[str]] = Field(
         default=None,
