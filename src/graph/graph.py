@@ -119,9 +119,11 @@ def _route_after_phase2(state: PaperState) -> str:
 
 
 def _route_after_postprocess(state: PaperState) -> str:
-    """postprocess 后：先检查是否失败，再检查 stop_after。"""
+    """postprocess 后：先检查失败/跳过（如国家复核非中国），再检查 stop_after。"""
     if state.get("status") == "failed":
         return "fail"
+    if state.get("status") == "skipped":
+        return "skip"
     if _should_stop(state, "postprocess"):
         return "done"
     return "continue"
@@ -206,7 +208,7 @@ def build_paper_graph(
         {"continue": "postprocess", "done": END})
 
     graph.add_conditional_edges("postprocess", _route_after_postprocess,
-        {"continue": "geocode", "fail": END, "done": END})
+        {"continue": "geocode", "fail": END, "skip": END, "done": END})
 
     graph.add_conditional_edges("geocode", _route_after_geocode,
         {"continue": "validate", "done": END})

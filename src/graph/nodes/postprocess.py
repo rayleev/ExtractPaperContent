@@ -2,6 +2,7 @@
 后处理节点 — Pydantic 验证 + 产量换算 + 数据清洗。
 
 处理步骤（按顺序）：
+  0. 国家复核（基于提取出的 study.country 判断是否中国，非中国 skip 不入库）
   1. Pydantic 模型校验 + 产量单位换算
   2. 多站点检测标记
   3. 品种审定编号回填
@@ -15,6 +16,7 @@ import logging
 
 from src.config import AppConfig
 from src.core.models import ExtractionResult
+from src.graph.country_utils import infer_paper_country, is_china, is_uncertain
 from src.graph.postprocess_utils import (
     filter_non_field_experiments,
     filter_no_yield_studies,
@@ -41,6 +43,33 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
         "paper": paper_info,
         "studies": phase2,
     }
+
+    # ── Step 0: 国家复核（提取后基于全文判断，仅放行中国论文）──
+    # filter 阶段对 Unknown（不确定国家）论文放行，这里用提取出的 study.country
+    # （兜底用行政区划）复核：
+    #   中国（含台湾）        → study.country 归一化为 'CN'，继续后续处理
+    #   非中国 / 无法确认     → status='skipped'，不写入结果表（batch 层标记 paper_status）
+    is_cn, evidence = infer_paper_country(phase2)
+    if not is_cn:
+        if evidence == "undetermined":
+            reason = "study country undetermined after extraction (no China signal in full text)"
+        else:
+            reason = f"study country '{evidence}' not China (judged from full text), extraction discarded"
+        logger.info(f"  [{pid[:25]}] Postprocess SKIP (country): {reason}")
+        return {
+            "extraction": combined,
+            "status": "skipped",
+            "errors": state.get("errors", []) + [
+                {"node": "country_judge", "error": reason}
+            ],
+        }
+
+    # 中国论文：归一化 study.country 为 'CN'（台湾/空值也统一为 CN）
+    for study in phase2:
+        c = study.get("country")
+        if is_china(c) or is_uncertain(c):
+            study["country"] = "CN"
+    logger.info(f"  [{pid[:25]}] Country check PASS ({evidence})")
 
     # ── Pydantic 验证 + 产量换算（yield_raw → yield_standard）──
     try:
