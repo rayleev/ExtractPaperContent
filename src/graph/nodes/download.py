@@ -17,6 +17,20 @@ from src.graph.state import PaperState
 logger = logging.getLogger("paper_extractor")
 
 
+def _is_valid_pdf(path: Path) -> bool:
+    """校验 PDF 有效性：文件存在、非 0 字节、文件头为 %PDF。
+
+    用于识别中断下载残留的空文件/损坏文件，避免把无效 PDF 当作已下载复用。
+    """
+    try:
+        if path.stat().st_size == 0:
+            return False
+        with open(path, "rb") as f:
+            return f.read(16).startswith(b"%PDF")
+    except OSError:
+        return False
+
+
 def download_node(state: PaperState, config: AppConfig, ss_client) -> dict:
     """
     下载论文 PDF。
@@ -71,17 +85,34 @@ def download_node(state: PaperState, config: AppConfig, ss_client) -> dict:
     year_str = str(year) if year else "unknown"
     save_path = config.pdf_path / year_str / f"{paper_id}.pdf"
 
-    # ── 已存在则跳过 ──
+    # ── 已存在则跳过（仅当文件有效；无效则删除重下）──
     if save_path.exists():
-        logger.debug(f"  [{paper_id[:25]}] PDF already exists: {save_path}")
-        paper_meta["pdf_path"] = str(save_path)
-        return {"paper_meta": paper_meta}
+        if _is_valid_pdf(save_path):
+            logger.debug(f"  [{paper_id[:25]}] PDF already exists: {save_path}")
+            paper_meta["pdf_path"] = str(save_path)
+            return {"paper_meta": paper_meta}
+        # 无效缓存（0字节/非PDF，多为中断下载残留）→ 删除后重新下载
+        logger.warning(
+            f"  [{paper_id[:25]}] Cached PDF invalid "
+            f"(size={save_path.stat().st_size}B), re-downloading: {save_path}"
+        )
+        try:
+            save_path.unlink()
+        except OSError:
+            pass
 
     # ── 下载 ──
     try:
         success = ss_client.download_pdf(download_id, save_path)
     except Exception as e:
         logger.error(f"  [{paper_id[:25]}] PDF download exception: {e}")
+        success = False
+
+    if success and not _is_valid_pdf(save_path):
+        logger.warning(
+            f"  [{paper_id[:25]}] Downloaded file invalid "
+            f"(size={save_path.stat().st_size if save_path.exists() else 0}B), treating as failed"
+        )
         success = False
 
     if success:
