@@ -40,6 +40,20 @@ class RunResponse(BaseModel):
     message: str = Field(default="", description="附加信息")
 
 
+class ImportRequest(BaseModel):
+    """按 SS paperId 批量导入论文的请求体。"""
+    ss_paper_ids: List[str] = Field(
+        description="Semantic Scholar paperId 列表（可含重复/空值，服务端会清洗去重）",
+    )
+
+
+class ImportResponse(BaseModel):
+    """批量导入触发后的响应。"""
+    job_id: str = Field(description="任务 ID，用于查询进度")
+    status: str = Field(description="任务状态: accepted/running")
+    message: str = Field(default="", description="附加信息")
+
+
 class JobStatus(BaseModel):
     """单个任务的进度状态。"""
     job_id: str

@@ -1,9 +1,18 @@
 """
-下载节点 — 从 Semantic Scholar 下载论文 PDF。
+下载节点 — 从 Semantic Scholar 获取论文全文（PDF 或 Markdown）。
 
-仅对通过分类筛选的论文下载。下载路径按年份组织：
-  {base_dir}/docs/PDF/{year}/{paper_id}.pdf
+仅对通过分类筛选的论文下载。下载前先用 /resources 接口检测资源类型，
+按 "PDF 优先、MD 兜底" 策略获取全文：
 
+  1. PDF 本地缓存命中 → 直接使用（不发 API 请求，保持原有快路径）
+  2. 调 GET /graph/v1/paper/{id}/resources 判断 pdf / md 可用性
+  3. pdf.exists → 下载 PDF（后续走 MinerU 解析，质量高）
+  4. 否则 md.exists → 下载 MD 到 output/parsed/{paper_id}.md 并设置 md_path
+     （parse_node 优先级 1 直读，跳过 MinerU）
+  5. 两者都无 → no_pdf，记录 pdf_missing
+  6. resources 接口本身失败 → 降级回"直接下载 PDF"的旧逻辑兜底
+
+PDF 按年份组织：{base_dir}/docs/PDF/{year}/{paper_id}.pdf
 下载失败时不中断 pipeline，设置 pdf_missing 标记并路由到 END。
 """
 
@@ -31,12 +40,54 @@ def _is_valid_pdf(path: Path) -> bool:
         return False
 
 
+def _is_valid_md(path: Path) -> bool:
+    """校验 MD 有效性：文件存在且非 0 字节。"""
+    try:
+        return path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _try_download_pdf(ss_client, download_id: str, save_path: Path, pid_log: str) -> bool:
+    """下载 PDF 并校验有效性，返回是否成功。"""
+    try:
+        success = ss_client.download_pdf(download_id, save_path)
+    except Exception as e:
+        logger.error(f"  [{pid_log}] PDF download exception: {e}")
+        success = False
+
+    if success and not _is_valid_pdf(save_path):
+        logger.warning(
+            f"  [{pid_log}] Downloaded PDF invalid "
+            f"(size={save_path.stat().st_size if save_path.exists() else 0}B), treating as failed"
+        )
+        success = False
+    return success
+
+
+def _no_pdf(state: PaperState, paper_meta: dict, paper_id: str, download_id: str, reason: str) -> dict:
+    """构建"无可用全文"的返回状态（记录 pdf_missing，路由到 END）。"""
+    msg = f"{reason} for {paper_id} (id={download_id})"
+    logger.warning(f"  [{paper_id[:25]}] {msg}")
+    return {
+        "paper_meta": paper_meta,
+        "pdf_missing": True,
+        "status": "no_pdf",
+        "errors": state.get("errors", []) + [{
+            "node": "download",
+            "error": msg,
+        }],
+    }
+
+
 def download_node(state: PaperState, config: AppConfig, ss_client) -> dict:
     """
-    下载论文 PDF。
+    下载论文全文（PDF 优先，MD 兜底）。
 
-    优先使用本地缓存（PDF 已存在时跳过下载）。
-    下载失败时返回 status="no_pdf"，不抛出异常。
+    先用 /resources 接口检测资源类型，再按策略下载：
+      - PDF 可用 → 下载 PDF（走 MinerU 解析）
+      - 仅 MD 可用 → 下载 MD 并设置 md_path（parse 直读，跳过 MinerU）
+      - 都不可用 → no_pdf
 
     Args:
         state: 当前论文状态。
@@ -48,6 +99,7 @@ def download_node(state: PaperState, config: AppConfig, ss_client) -> dict:
     """
     paper_id = state["paper_id"]
     paper_meta = state.get("paper_meta", {})
+    pid_log = paper_id[:25]
 
     # ── 解析 paper identifier（paperId 或 DOI）──
     s2_paper_id = (
@@ -63,17 +115,10 @@ def download_node(state: PaperState, config: AppConfig, ss_client) -> dict:
         download_id = f"doi:{doi}"
 
     if not download_id:
-        msg = f"No paperId or DOI available for {paper_id}, cannot download PDF"
-        logger.warning(f"  [{paper_id[:25]}] {msg}")
-        return {
-            "paper_meta": paper_meta,
-            "pdf_missing": True,
-            "status": "no_pdf",
-            "errors": state.get("errors", []) + [{
-                "node": "download",
-                "error": msg,
-            }],
-        }
+        return _no_pdf(
+            state, paper_meta, paper_id, "",
+            "No paperId or DOI available, cannot download",
+        )
 
     # ── 确定保存路径 ──
     year = (
@@ -83,55 +128,79 @@ def download_node(state: PaperState, config: AppConfig, ss_client) -> dict:
         or ""
     )
     year_str = str(year) if year else "unknown"
-    save_path = config.pdf_path / year_str / f"{paper_id}.pdf"
+    pdf_save_path = config.pdf_path / year_str / f"{paper_id}.pdf"
+    md_save_path = config.parsed_path / f"{paper_id}.md"
 
-    # ── 已存在则跳过（仅当文件有效；无效则删除重下）──
-    if save_path.exists():
-        if _is_valid_pdf(save_path):
-            logger.debug(f"  [{paper_id[:25]}] PDF already exists: {save_path}")
-            paper_meta["pdf_path"] = str(save_path)
+    # ── 步骤 1: PDF 本地缓存（保持原有快路径，不发 API 请求）──
+    if pdf_save_path.exists():
+        if _is_valid_pdf(pdf_save_path):
+            logger.debug(f"  [{pid_log}] PDF already exists: {pdf_save_path}")
+            paper_meta["pdf_path"] = str(pdf_save_path)
             return {"paper_meta": paper_meta}
         # 无效缓存（0字节/非PDF，多为中断下载残留）→ 删除后重新下载
         logger.warning(
-            f"  [{paper_id[:25]}] Cached PDF invalid "
-            f"(size={save_path.stat().st_size}B), re-downloading: {save_path}"
+            f"  [{pid_log}] Cached PDF invalid "
+            f"(size={pdf_save_path.stat().st_size}B), re-downloading: {pdf_save_path}"
         )
         try:
-            save_path.unlink()
+            pdf_save_path.unlink()
         except OSError:
             pass
 
-    # ── 下载 ──
-    try:
-        success = ss_client.download_pdf(download_id, save_path)
-    except Exception as e:
-        logger.error(f"  [{paper_id[:25]}] PDF download exception: {e}")
-        success = False
+    # ── 步骤 2: 检测资源类型 ──
+    resources = ss_client.get_resources(download_id)
 
-    if success and not _is_valid_pdf(save_path):
+    if not resources:
+        # resources 接口不可用 → 降级回旧逻辑：直接尝试下载 PDF
         logger.warning(
-            f"  [{paper_id[:25]}] Downloaded file invalid "
-            f"(size={save_path.stat().st_size if save_path.exists() else 0}B), treating as failed"
+            f"  [{pid_log}] resources check unavailable, "
+            f"falling back to direct PDF download"
         )
-        success = False
+        if _try_download_pdf(ss_client, download_id, pdf_save_path, pid_log):
+            logger.info(f"  [{pid_log}] PDF downloaded (fallback): {pdf_save_path}")
+            paper_meta["pdf_path"] = str(pdf_save_path)
+            return {"paper_meta": paper_meta, "status": state.get("status", "downloaded")}
+        return _no_pdf(
+            state, paper_meta, paper_id, download_id,
+            "resources unavailable and PDF download failed",
+        )
 
-    if success:
-        logger.info(f"  [{paper_id[:25]}] PDF downloaded: {save_path}")
-        paper_meta["pdf_path"] = str(save_path)
-        return {
-            "paper_meta": paper_meta,
-            "status": state.get("status", "downloaded"),
-        }
+    pdf_info = resources.get("pdf", {})
+    md_info = resources.get("md", {})
 
-    # ── 下载失败 ──
-    msg = f"PDF download failed for {paper_id} (id={download_id})"
-    logger.warning(f"  [{paper_id[:25]}] {msg}")
-    return {
-        "paper_meta": paper_meta,
-        "pdf_missing": True,
-        "status": "no_pdf",
-        "errors": state.get("errors", []) + [{
-            "node": "download",
-            "error": msg,
-        }],
-    }
+    # ── 步骤 3: PDF 优先（MinerU 解析质量高）──
+    if pdf_info.get("exists"):
+        if _try_download_pdf(ss_client, download_id, pdf_save_path, pid_log):
+            logger.info(f"  [{pid_log}] PDF downloaded: {pdf_save_path}")
+            paper_meta["pdf_path"] = str(pdf_save_path)
+            return {"paper_meta": paper_meta, "status": state.get("status", "downloaded")}
+        logger.warning(f"  [{pid_log}] PDF exists but download failed, trying MD fallback")
+
+    # ── 步骤 4: MD 兜底（parse_node 优先级 1 直读，跳过 MinerU）──
+    if md_info.get("exists"):
+        # 本地缓存命中则直接复用
+        if md_save_path.exists() and _is_valid_md(md_save_path):
+            logger.debug(f"  [{pid_log}] MD already exists: {md_save_path}")
+            paper_meta["md_path"] = str(md_save_path)
+            return {"paper_meta": paper_meta}
+
+        try:
+            success = ss_client.download_md(
+                download_id, md_save_path,
+                download_url=md_info.get("downloadUrl"),
+            )
+        except Exception as e:
+            logger.error(f"  [{pid_log}] MD download exception: {e}")
+            success = False
+
+        if success and _is_valid_md(md_save_path):
+            logger.info(f"  [{pid_log}] MD downloaded (skip MinerU): {md_save_path}")
+            paper_meta["md_path"] = str(md_save_path)
+            return {"paper_meta": paper_meta, "status": state.get("status", "downloaded")}
+        logger.warning(f"  [{pid_log}] MD download failed")
+
+    # ── 步骤 5: 无可用资源 ──
+    return _no_pdf(
+        state, paper_meta, paper_id, download_id,
+        "No PDF or MD resource available",
+    )

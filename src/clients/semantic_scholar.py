@@ -230,3 +230,155 @@ class SemanticScholarClient:
             except OSError:
                 pass
             return False
+
+    def get_paper(self, paper_id: str, fields: str = DEFAULT_SEARCH_FIELDS) -> Optional[dict]:
+        """
+        按 paperId 查询单篇论文的元数据。
+
+        Args:
+            paper_id: Semantic Scholar paperId。
+            fields: 逗号分隔的返回字段列表。
+
+        Returns:
+            论文元数据字典；论文不存在或请求失败时返回 ``None``。
+        """
+        url = f"{self.base_url}/graph/v1/paper/{paper_id}"
+        resp = self._request_with_retry("GET", url, params={"fields": fields}, timeout=60)
+        if resp is None:
+            return None
+        try:
+            return resp.json()
+        except Exception as e:
+            logger.error(f"  SemanticScholar get_paper parse error for {paper_id}: {e}")
+            return None
+
+    def get_papers_batch(
+        self,
+        paper_ids: list,
+        fields: str = DEFAULT_SEARCH_FIELDS,
+    ) -> list:
+        """
+        批量查询论文元数据。
+
+        优先使用官方批量端点 ``POST /graph/v1/paper/batch``（单次最多 500 个 ID）；
+        若代理不支持该端点（404/405 等），自动降级为逐个 ``GET /paper/{id}`` 查询。
+
+        Args:
+            paper_ids: paperId 列表（建议每批不超过 500 个）。
+            fields: 逗号分隔的返回字段列表。
+
+        Returns:
+            成功查询到的论文元数据列表（查不到的 ID 会被跳过，不报错）。
+        """
+        if not paper_ids:
+            return []
+
+        url = f"{self.base_url}/graph/v1/paper/batch"
+        try:
+            self._throttle()
+            resp = self.session.post(
+                url,
+                params={"fields": fields},
+                json={"ids": list(paper_ids)},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+            if isinstance(body, list):
+                # 批量端点对查不到的 ID 返回 null，过滤掉
+                return [p for p in body if p]
+            logger.warning(
+                f"  SemanticScholar batch returned unexpected shape "
+                f"({type(body).__name__}), falling back to individual lookups"
+            )
+        except Exception as e:
+            logger.warning(
+                f"  SemanticScholar batch endpoint unavailable ({e}), "
+                f"falling back to individual lookups"
+            )
+
+        # ── 降级：逐个查询（复用 _request_with_retry 的重试/限流）──
+        results = []
+        for pid in paper_ids:
+            paper = self.get_paper(pid, fields)
+            if paper:
+                results.append(paper)
+        return results
+
+    def get_resources(self, paper_id: str) -> dict:
+        """
+        查询论文可用资源类型（PDF / MD）。
+
+        调用 ``GET /graph/v1/paper/{paper_id}/resources``，返回形如::
+
+            {
+                "md":  {"file": "xxx.md", "exists": bool, "downloadUrl": ...},
+                "pdf": {"file": "xxx.pdf", "exists": bool, "downloadUrl": ...},
+            }
+
+        ``text`` 字段仅为预览，不解析。
+
+        Args:
+            paper_id: paperId 或 ``doi:xxx``。
+
+        Returns:
+            含 ``md`` / ``pdf`` 两个键的字典；接口不可用或请求失败时返回 ``{}``
+            （调用方据此降级回"直接下载 PDF"的旧逻辑）。
+        """
+        url = f"{self.base_url}/graph/v1/paper/{paper_id}/resources"
+        resp = self._request_with_retry("GET", url, timeout=60)
+        if resp is None:
+            return {}
+        try:
+            body = resp.json()
+        except Exception as e:
+            logger.error(f"  SemanticScholar resources parse error for {paper_id}: {e}")
+            return {}
+        return {
+            "md": body.get("md") or {},
+            "pdf": body.get("pdf") or {},
+        }
+
+    def download_md(
+        self,
+        paper_id: str,
+        save_path: Path,
+        download_url: Optional[str] = None,
+    ) -> bool:
+        """
+        下载论文的 Markdown 全文并保存到本地。
+
+        优先使用 ``get_resources`` 返回的 ``downloadUrl`` 直链；
+        未提供时回退到 ``GET /graph/v1/paper/{paper_id}/resources/md`` 端点。
+
+        Args:
+            paper_id: paperId 或 ``doi:xxx``。
+            save_path: MD 文件的本地保存路径。
+            download_url: 可选的直链下载地址（来自 resources 响应）。
+
+        Returns:
+            下载成功返回 ``True``；无 MD 或发生错误返回 ``False``。
+        """
+        url = download_url or f"{self.base_url}/graph/v1/paper/{paper_id}/resources/md"
+        resp = self._request_with_retry("GET", url, stream=True, timeout=300)
+        if resp is None:
+            logger.warning(f"  SemanticScholar MD unavailable for paper {paper_id}")
+            return False
+
+        try:
+            save_path = Path(save_path)
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(save_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            logger.info(f"  SemanticScholar MD saved: {save_path}")
+            return True
+        except Exception as e:
+            logger.error(f"  SemanticScholar MD write failed for {paper_id}: {e}")
+            try:
+                if save_path.exists():
+                    save_path.unlink()
+            except OSError:
+                pass
+            return False

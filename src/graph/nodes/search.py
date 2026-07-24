@@ -78,7 +78,7 @@ def search_node(
         config: 应用配置，包含搜索关键词和输出路径等。
         ss_client: Semantic Scholar API 客户端实例。
         db_conn: psycopg2 连接对象。搜索结果写入 paper_status 表。
-        limit: 每个关键词最多返回的论文数量（小批次测试用）。None 不限制。
+        limit: 跨关键词的总量上限（按已收集数量扣减剩余配额）。None 不限制。
 
     Returns:
         状态更新字典：
@@ -158,4 +158,101 @@ def search_node(
         "search_total": total,
         "search_new": search_new,
         "status": "searched",
+    }
+
+
+def import_papers_by_ids(
+    ss_paper_ids: list,
+    config: AppConfig,
+    ss_client: SemanticScholarClient,
+    db_conn=None,
+    batch_size: int = 500,
+) -> dict:
+    """
+    按 Semantic Scholar paperId 批量导入论文到 paper_status 表（独立函数）。
+
+    与搜索不同，导入已知晓确切的论文 ID，因此直接按 ID 拉取元数据，
+    无需关键词搜索。拉取到的论文以 status='pending' 写入 paper_status 表
+    （ON CONFLICT DO NOTHING 幂等去重），后续走 process 步骤处理。
+
+    Args:
+        ss_paper_ids: SS paperId 列表（可含重复/空值，内部会清洗去重）。
+        config: 应用配置。
+        ss_client: Semantic Scholar API 客户端实例。
+        db_conn: psycopg2 连接对象。
+        batch_size: 每批拉取的 ID 数量（默认 500，SS batch 端点上限）。
+
+    Returns:
+        导入统计字典：
+        - total: 去重后的 ID 总数 (int)
+        - fetched: 成功拉到元数据的数量 (int)
+        - new: 新入库的数量 (int)
+        - existed: 已存在被跳过的数量 (int)
+        - failed: 未查到元数据的 ID 数量 (int)
+        - failed_ids: 未查到的 paperId 列表 (list)
+    """
+    # ── 清洗 + 去重（保持顺序）──
+    seen: set = set()
+    unique_ids: list = []
+    for raw in ss_paper_ids:
+        pid = (raw or "").strip()
+        if pid and pid not in seen:
+            seen.add(pid)
+            unique_ids.append(pid)
+
+    total = len(unique_ids)
+    logger.info(f"开始按 ID 导入: {total} 个 SS paperId (batch_size={batch_size})")
+
+    all_papers: list = []
+    failed_ids: list = []
+
+    # ── 分批拉取元数据 ──
+    for start in range(0, total, batch_size):
+        batch = unique_ids[start:start + batch_size]
+        batch_num = start // batch_size + 1
+        logger.info(f"  批次 {batch_num}: 拉取 {len(batch)} 个 ID 的元数据")
+        try:
+            results = ss_client.get_papers_batch(batch, DEFAULT_SEARCH_FIELDS)
+        except Exception as e:
+            logger.error(f"  批次 {batch_num} 拉取失败: {e}")
+            results = []
+
+        found = {sp.get("paperId"): sp for sp in results if sp.get("paperId")}
+        for bid in batch:
+            if bid in found:
+                all_papers.append(_convert_ss_paper(found[bid]))
+            else:
+                failed_ids.append(bid)
+
+        logger.info(
+            f"  批次 {batch_num}: 命中 {len(found)} 个, "
+            f"累计 {len(all_papers)} 个, 未查到 {len(failed_ids)} 个"
+        )
+
+    # ── title 为空的论文用 ss_paper_id 生成 paper_id 兜底 ──
+    # （否则所有空标题论文会共用同一个 MD5，互相覆盖）
+    for p in all_papers:
+        if not p.get("title"):
+            ss_pid = p.get("ss_paper_id", "")
+            p["paper_id"] = f"P_{hashlib.md5(ss_pid.encode('utf-8')).hexdigest()[:10]}"
+
+    # ── 写入 paper_status 表（幂等去重，status='pending'）──
+    new = 0
+    if db_conn is not None and all_papers:
+        from src.graph.output import insert_search_results
+        new = insert_search_results(db_conn, all_papers)
+        logger.info(
+            f"导入完成: 共 {len(all_papers)} 篇, 新入库 {new} 篇, "
+            f"已存在 {len(all_papers) - new} 篇, 未查到 {len(failed_ids)} 个 ID"
+        )
+    else:
+        logger.warning("未提供数据库连接或无可导入论文，结果未持久化")
+
+    return {
+        "total": total,
+        "fetched": len(all_papers),
+        "new": new,
+        "existed": len(all_papers) - new,
+        "failed": len(failed_ids),
+        "failed_ids": failed_ids,
     }

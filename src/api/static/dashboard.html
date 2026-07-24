@@ -194,6 +194,25 @@
     </div>
   </div>
 
+  <!-- import by paper id -->
+  <div class="section-title">Import by Paper ID</div>
+  <div class="card">
+    <div class="form-row">
+      <div class="form-group">
+        <label>CSV files (article_id column)</label>
+        <input type="file" id="importFiles" accept=".csv" multiple onchange="handleImportFiles(this)"
+               style="padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; background:#fff;">
+      </div>
+      <span style="font-size:13px; color:var(--muted); align-self:center" id="importCount">No IDs parsed</span>
+      <button class="btn btn-primary" id="importBtn" onclick="triggerImport()">Import</button>
+    </div>
+    <div class="sub" style="margin-top:8px">
+      Reads the <code>article_id</code> column (SS paperId), fetches metadata from Semantic Scholar
+      and inserts into <code>paper_status</code> as <b>pending</b>. Sent to a single instance only
+      (import writes to the shared DB). Imported papers are processed on the next <code>process</code> run.
+    </div>
+  </div>
+
   <!-- jobs -->
   <div class="section-title">Jobs</div>
   <div class="card">
@@ -419,6 +438,80 @@ async function triggerRun() {
     toast('All instances failed to start', false);
   }
   setTimeout(loadJobs, 1000);
+  btn.disabled = false;
+}
+
+// ── import by paper id ──
+let importIds = [];
+
+function parseCsvIds(text) {
+  // 去掉 UTF-8 BOM，按行拆分
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
+  if (!lines.length) return [];
+  // 识别表头中的 article_id 列；找不到则取第一列并把首行当数据
+  const header = lines[0].split(',').map(s => s.trim().toLowerCase().replace(/^"|"$/g, ''));
+  let idx = header.findIndex(h => h === 'article_id');
+  let start = 0;
+  if (idx !== -1) {
+    start = 1;  // 跳过表头行
+  } else {
+    idx = 0;
+  }
+  const ids = [];
+  for (let i = start; i < lines.length; i++) {
+    const cols = lines[i].split(',');
+    const val = (cols[idx] || '').trim().replace(/^"|"$/g, '');
+    if (val) ids.push(val);
+  }
+  return ids;
+}
+
+function updateImportCount() {
+  document.getElementById('importCount').textContent =
+    importIds.length ? `${importIds.length} paper IDs ready` : 'No IDs parsed';
+}
+
+function handleImportFiles(input) {
+  const files = Array.from(input.files || []);
+  if (!files.length) { importIds = []; updateImportCount(); return; }
+  importIds = [];
+  let pending = files.length;
+  const finish = () => {
+    if (--pending === 0) {
+      importIds = [...new Set(importIds.map(s => s.trim()).filter(Boolean))];
+      updateImportCount();
+    }
+  };
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => { importIds = importIds.concat(parseCsvIds(e.target.result)); finish(); };
+    reader.onerror = finish;
+    reader.readAsText(file);
+  });
+}
+
+async function triggerImport() {
+  if (!importIds.length) { toast('No paper IDs parsed from CSV', false); return; }
+  const btn = document.getElementById('importBtn');
+  btn.disabled = true;
+  // 只发单个实例：导入写共享 DB，发三个实例会让 SS API 调用翻三倍
+  const port = PORTS[0];
+  try {
+    const r = await fetch(`http://${window.location.hostname}:${port}/api/import`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ ss_paper_ids: importIds }),
+    });
+    const d = await r.json();
+    if (d.job_id) {
+      toast(`Import started on :${port} (${importIds.length} IDs), job ${d.job_id.substring(0, 8)}`, true);
+      setTimeout(loadJobs, 1000);
+    } else {
+      toast('Import failed to start: ' + (d.detail || 'unknown'), false);
+    }
+  } catch(e) {
+    toast(`Import request failed: ${e.message}`, false);
+  }
   btn.disabled = false;
 }
 

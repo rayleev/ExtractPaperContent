@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException
 from src.api.schemas import (
     RunRequest, RunResponse, JobStatus, StopResponse,
     TableStats, PaperStatusResponse, ProgressResponse,
+    ImportRequest, ImportResponse,
 )
 
 logger = logging.getLogger("paper_extractor")
@@ -223,6 +224,66 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
         )
 
 
+def _run_import(job_id: str, ss_paper_ids: list):
+    """
+    在后台线程中执行按 SS paperId 的批量导入。
+
+    拉取元数据 → 写入 paper_status 表（status='pending'，幂等去重）。
+    导入完成后论文即可通过 process 步骤处理。
+
+    Args:
+        job_id: 任务标识符。
+        ss_paper_ids: SS paperId 列表。
+    """
+    import sys
+    project_root = Path(__file__).resolve().parent.parent.parent
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
+    from src.config import load_config
+    from src.clients.semantic_scholar import SemanticScholarClient
+    from src.graph.nodes.search import import_papers_by_ids
+    from src.graph.output import get_connection
+
+    _update_job(job_id, status="running", started_at=datetime.now().isoformat())
+
+    try:
+        config = load_config()
+        ss_client = SemanticScholarClient(
+            base_url=config.semantic_scholar.base_url,
+            api_key=config.semantic_scholar.api_key,
+            max_retries=config.semantic_scholar.max_retries,
+            request_interval=config.semantic_scholar.request_interval,
+        )
+
+        conn = get_connection(config.database.connection_string)
+        result = import_papers_by_ids(ss_paper_ids, config, ss_client, conn)
+        conn.close()
+
+        # failed_ids 可能很大，写入 job stats 时只保留前 100 个作样本
+        stats = {k: v for k, v in result.items() if k != "failed_ids"}
+        stats["failed_ids_sample"] = result.get("failed_ids", [])[:100]
+
+        _update_job(job_id,
+            status="completed",
+            step="import",
+            stats=stats,
+            finished_at=datetime.now().isoformat(),
+            message=(
+                f"导入完成: 新入库 {result['new']} 篇, "
+                f"已存在 {result['existed']} 篇, 未查到 {result['failed']} 个 ID"
+            ),
+        )
+
+    except Exception as e:
+        logger.error(f"[Job {job_id[:8]}] Import failed: {e}", exc_info=True)
+        _update_job(job_id,
+            status="failed",
+            error=str(e)[:500],
+            finished_at=datetime.now().isoformat(),
+        )
+
+
 # ── 路由定义 ──────────────────────────────────────────────
 
 @router.post("/run", response_model=RunResponse)
@@ -262,6 +323,43 @@ def trigger_run(request: RunRequest):
         job_id=job_id,
         status="accepted",
         message=f"Pipeline '{request.step}' started in background",
+    )
+
+
+@router.post("/import", response_model=ImportResponse)
+def trigger_import(request: ImportRequest):
+    """
+    按 SS paperId 批量导入论文。
+
+    在后台线程中拉取元数据并写入 paper_status 表（status='pending'），
+    立即返回 job_id。通过 GET /api/status/{job_id} 查询进度。
+    导入完成的论文可通过 process 步骤处理。
+    """
+    job_id = str(uuid.uuid4())
+
+    with _jobs_lock:
+        _jobs[job_id] = {
+            "job_id": job_id,
+            "status": "accepted",
+            "step": "import",
+            "stats": None,
+            "started_at": None,
+            "finished_at": None,
+            "error": None,
+            "message": "",
+        }
+
+    thread = threading.Thread(
+        target=_run_import,
+        args=(job_id, request.ss_paper_ids),
+        daemon=True,
+    )
+    thread.start()
+
+    return ImportResponse(
+        job_id=job_id,
+        status="accepted",
+        message=f"Import of {len(request.ss_paper_ids)} IDs started in background",
     )
 
 
