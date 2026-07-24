@@ -3,9 +3,13 @@
 #
 #  3 个 extractor 实例共享：
 #    - PostgreSQL 数据库（外部，地址通过 DB_HOST 配置）
-#    - 宿主机 bind mount 目录（docs/PDF、docs/meta、output/parsed、cache），
+#    - 宿主机 bind mount 目录（docs/PDF、docs/meta、output/parsed），
 #      三容器挂载同一路径，避免重复下载，宿主机可直接管理文件
 #    - 各自的 LLM API Key（环境变量注入）
+#
+#  注意：每个实例有独立的 cache 目录（cache-1/2/3），
+#        避免多容器并发写同一个 SQLite checkpoint 文件导致锁冲突。
+#        geocoding_cache.json 各实例独立维护（73KB，低频更新）。
 #
 #  必需环境变量（在 .env 文件中设置）：
 #    DB_HOST, DB_PASSWORD, SS_API_KEY
@@ -53,7 +57,7 @@ services:
       - ./docs/meta:/app/docs/meta
       - ./output/parsed:/app/output/parsed
       - ./output/logs:/app/output/logs
-      - ./cache:/app/cache
+      - ./cache-1:/app/cache
     logging: *common-logging
     env_file:
       - .env
@@ -81,7 +85,7 @@ services:
       - ./docs/meta:/app/docs/meta
       - ./output/parsed:/app/output/parsed
       - ./output/logs:/app/output/logs
-      - ./cache:/app/cache
+      - ./cache-2:/app/cache
     logging: *common-logging
     env_file:
       - .env
@@ -109,7 +113,7 @@ services:
       - ./docs/meta:/app/docs/meta
       - ./output/parsed:/app/output/parsed
       - ./output/logs:/app/output/logs
-      - ./cache:/app/cache
+      - ./cache-3:/app/cache
     logging: *common-logging
     env_file:
       - .env
