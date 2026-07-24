@@ -309,14 +309,20 @@ class SemanticScholarClient:
         """
         查询论文可用资源类型（PDF / MD）。
 
-        调用 ``GET /graph/v1/paper/{paper_id}/resources``，返回形如::
+        调用 ``GET /graph/v1/paper/{paper_id}/resources``。注意实际响应被包裹在
+        ``"data"`` 键内::
+
+            {"data": {"paperId": ..., "text": ..., "md": {...}, "pdf": {...}}}
+
+        本方法解包后返回形如::
 
             {
                 "md":  {"file": "xxx.md", "exists": bool, "downloadUrl": ...},
                 "pdf": {"file": "xxx.pdf", "exists": bool, "downloadUrl": ...},
             }
 
-        ``text`` 字段仅为预览，不解析。
+        ``text`` 字段虽为论文全文，但与 ``md`` 内容冗余，按设计忽略（PDF 优先、
+        MD 兜底，md 下载成文件后复用 parse_node 的 md_path 直读流程）。
 
         Args:
             paper_id: paperId 或 ``doi:xxx``。
@@ -334,9 +340,11 @@ class SemanticScholarClient:
         except Exception as e:
             logger.error(f"  SemanticScholar resources parse error for {paper_id}: {e}")
             return {}
+        # 响应被包裹在 "data" 键内，先解包（兼容无 data 包裹的情况）
+        data = body.get("data", body)
         return {
-            "md": body.get("md") or {},
-            "pdf": body.get("pdf") or {},
+            "md": data.get("md") or {},
+            "pdf": data.get("pdf") or {},
         }
 
     def download_md(
