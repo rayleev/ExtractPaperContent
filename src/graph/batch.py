@@ -31,6 +31,7 @@ from src.graph.output import (
     insert_classification,
     insert_validation,
     insert_pdf_missing,
+    delete_pdf_missing,
     claim_tasks,
     export_table_csv,
     export_delivery_csv,
@@ -384,6 +385,8 @@ class BatchOrchestrator:
                     self.db_conn, pid, title, target_step,
                     "completed", duration, run_id=self.config.run_id,
                 )
+                # 已成功处理（含 MD 兜底），从 pdf_missing 移除，该表只留当前卡住的
+                delete_pdf_missing(self.db_conn, pid)
         elif status == "skipped":
             self.stats["skipped"] += 1
             skip_reason = ""
@@ -396,6 +399,8 @@ class BatchOrchestrator:
                     "skipped", duration, error_message=skip_reason,
                     run_id=self.config.run_id,
                 )
+                # 已被剔除（如非中国论文），视为已解决，从 pdf_missing 移除
+                delete_pdf_missing(self.db_conn, pid)
         else:
             self.stats["failed"] += 1
             error_msg = str(result.get("errors", [{}])[-1].get("error", status))[:500]

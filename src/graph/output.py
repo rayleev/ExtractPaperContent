@@ -763,6 +763,18 @@ def insert_pdf_missing(conn, paper_id: str, title: str = "", doi: str = "", reas
     conn.commit()
 
 
+def delete_pdf_missing(conn, paper_id: str):
+    """论文已成功处理或被剔除时，从 pdf_missing 移除。
+
+    pdf_missing 表只保留"当前仍卡住"的论文（确实无法获取任何全文资源）。
+    一旦论文靠 MD 兜底成功提取（completed）或因非中国等原因被剔除（skipped），
+    即视为已解决，从该表移除。DELETE 幂等，论文不在表中时为无害空操作。
+    """
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM pdf_missing WHERE paper_id = %s", (paper_id,))
+    conn.commit()
+
+
 def insert_search_results(conn, papers: List[dict]) -> int:
     """
     将搜索结果批量写入 paper_status 表（幂等）。
