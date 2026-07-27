@@ -87,17 +87,48 @@
 **摘要**: {abstract}
 **关键词**: {keywords}
 **期刊/来源**: {journal}
-**语言**: {language}
 
 ## 试验地点筛选（重要）
 
-本项目**仅关注试验地点在中国境内**的研究。请根据摘要、关键词、期刊来源等信息判断试验地点：
+本项目**仅关注试验地点在中国境内**的研究。请根据标题、摘要、关键词、期刊来源等信息判断试验地点：
 - 中文论文、CNKI来源、提到中国省市地名（如黑龙江、吉林、辽宁、河南、湖南、四川等）→ China
 - 英文论文且摘要中提到 China / Chinese / 中国具体省份或城市 → China
 - 英文论文且试验地点明确在其他国家（如 India, USA, Japan, Brazil 等）→ 对应国家名
 - 无法从元数据判断试验地点 → Unknown
 
 **如果 research_country 不是 China，该论文将直接跳过，不进行后续解析和提取。**
+
+## 试验地点判断示例（few-shot）
+
+**示例 1**：
+- 标题：不同施氮量对水稻产量的影响
+- 摘要：本试验于 2022 年在河南省信阳市进行...
+- 判断：China（中文论文 + 提到河南）
+
+**示例 2**：
+- 标题：Rice yield response to nitrogen fertilization in the USA
+- 摘要：A field experiment was conducted in Arkansas, USA...
+- 判断：USA（英文论文 + 明确提到 USA）
+
+**示例 3**：
+- 标题：中国水稻产量变化及其驱动因素
+- 摘要：基于 2000-2020 年中国省级统计数据...
+- 判断：China（中文论文 + 提到中国）
+
+**示例 4**：
+- 标题：Climate change and global rice production
+- 摘要：This study analyzes rice yield trends across major producing countries...
+- 判断：Unknown（无法判断具体国家）
+
+**示例 5**：
+- 标题：水稻品种比较试验
+- 摘要：（无明确地点信息，但为中文论文）
+- 判断：China（中文论文默认中国）
+
+**示例 6**：
+- 标题：Effect of tillage on rice yield in India
+- 摘要：Field experiments were conducted at the Indian Agricultural Research Institute...
+- 判断：India（英文论文 + 明确提到 India）
 
 ## 输出格式
 

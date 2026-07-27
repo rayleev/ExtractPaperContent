@@ -18,6 +18,33 @@ logger = logging.getLogger("paper_extractor")
 
 PROMPT_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 
+# 中国省级行政区关键词（用于修正 LLM 的 Unknown 判断）
+_CHINA_PROVINCE_KEYWORDS = [
+    "北京", "天津", "上海", "重庆",
+    "河北", "山西", "辽宁", "吉林", "黑龙江", "江苏", "浙江", "安徽",
+    "福建", "江西", "山东", "河南", "湖北", "湖南", "广东", "海南",
+    "四川", "贵州", "云南", "陕西", "甘肃", "青海", "内蒙古", "广西","香港","澳门",
+    "西藏", "宁夏", "新疆", "台湾",
+]
+
+
+def _correct_research_country(classification: dict, paper_meta: dict) -> dict:
+    """
+    修正 LLM 的 research_country 判断。
+    如果 LLM 返回 Unknown，但标题/摘要包含中国地名，强制修正为 China。
+    """
+    country = classification.get("research_country", "")
+    if country and country != "Unknown":
+        return classification  # LLM 有明确判断，不修正
+
+    # LLM 返回 Unknown 或空，检查标题/摘要中的中国地名
+    text = (paper_meta.get("title", "") + " " + paper_meta.get("abstract", "")).lower()
+    if any(province in text for province in _CHINA_PROVINCE_KEYWORDS):
+        classification["research_country"] = "China"
+        classification["reasoning"] = classification.get("reasoning", "") + " [规则修正：标题/摘要包含中国地名]"
+
+    return classification
+
 
 def _load_classify_prompt() -> str:
     """加载分类 prompt 模板。"""
@@ -48,14 +75,16 @@ def classify_node(state: PaperState, config: AppConfig, llm: LLMClient) -> dict:
         abstract=paper_meta.get("abstract", ""),
         keywords=paper_meta.get("keywords", ""),
         journal=paper_meta.get("journal", ""),
-        language="中文" if paper_meta.get("language") == "zh" else "English",
         crop_list=crop_list,
     )
 
     logger.info(f"  [{pid[:25]}] Classifying: {paper_meta.get('title', '')[:60]}")
     result = llm.call_json(prompt, max_tokens=1000)
-    classification = result or {"category": "unknown", "language": "zh"}
+    classification = result or {"category": "unknown"}
     classification["paper_id"] = pid
+
+    # 修正 research_country 判断（方案 B：规则修正）
+    classification = _correct_research_country(classification, paper_meta)
 
     logger.info(
         f"  [{pid[:25]}] Classification: category={classification.get('category')}, "
