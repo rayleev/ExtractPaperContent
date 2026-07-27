@@ -19,7 +19,7 @@ logger = logging.getLogger("paper_extractor")
 # 搜索时默认请求的字段列表
 DEFAULT_SEARCH_FIELDS = (
     "paperId,title,doi,pmid,pmcid,abstract,authors,keywords,"
-    "publicationYear,journal,metadata,resources"
+    "publication_year,journal,metadata,resources"
 )
 
 
