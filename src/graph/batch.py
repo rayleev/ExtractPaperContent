@@ -76,8 +76,9 @@ class BatchOrchestrator:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # PostgreSQL 输出数据库（所有结果统一存储，含注册表功能）
+        # 注意：不使用共享连接，每个线程创建独立连接以避免事务冲突
+        self._db_connection_string = config.database.connection_string
         self._db_lock = threading.Lock()
-        self.db_conn = get_connection(config.database.connection_string)
 
         # 多实例标识（用于任务领取 claim_tasks）
         self.instance_id = os.environ.get("INSTANCE_ID", "default")
@@ -186,11 +187,15 @@ class BatchOrchestrator:
                     title = paper.get("title", "")[:80]
                     logger.error(f"  Paper {pid[:25]} failed: {e}", exc_info=True)
                     self.stats["failed"] += 1
-                    with self._db_lock:
+                    # 异常处理使用独立连接
+                    err_conn = get_connection(self._db_connection_string)
+                    try:
                         update_paper_status(
-                            self.db_conn, pid, title, target_step,
+                            err_conn, pid, title, target_step,
                             "error", duration, str(e)[:500], self.config.run_id,
                         )
+                    finally:
+                        err_conn.close()
                     self._log_progress()
 
         self.stats["finished_at"] = datetime.now().isoformat()
@@ -202,14 +207,19 @@ class BatchOrchestrator:
             # 仅分类步骤：写入分类表
             cls_records = [r.get("classification") for r in self._completed_results if r.get("classification")]
             if cls_records:
-                insert_classification(self.db_conn, cls_records)
-                export_table_csv(self.db_conn, "classification",
+                # 使用独立连接
+                cls_conn = get_connection(self._db_connection_string)
+                insert_classification(cls_conn, cls_records)
+                export_table_csv(cls_conn, "classification",
                                  self.config.classification_path / "classification.csv")
+                cls_conn.close()
 
         # 打印 DB 统计
         try:
-            table_stats = get_table_stats(self.db_conn)
+            conn = get_connection(self._db_connection_string)
+            table_stats = get_table_stats(conn)
             logger.info(f"Database stats: {table_stats}")
+            conn.close()
         except Exception:
             pass
 
@@ -219,34 +229,34 @@ class BatchOrchestrator:
             f"(total {self.stats['total']})"
         )
 
-        # 关闭 DB 连接
-        self.db_conn.close()
-
         return self.stats
 
     def _generate_outputs(self, classifications: Optional[List[dict]]):
         """批次完成后生成所有输出文件。"""
         logger.info("Generating outputs...")
 
+        # 使用独立连接，避免与线程中的连接冲突
+        conn = get_connection(self._db_connection_string)
+
         # 1. 分类结果写入 DB + 导出 CSV
         if classifications:
-            insert_classification(self.db_conn, classifications)
-            export_table_csv(self.db_conn, "classification",
+            insert_classification(conn, classifications)
+            export_table_csv(conn, "classification",
                              self.config.classification_path / "classification.csv")
 
         # 2. 验证报告写入 DB + 导出 CSV
-        insert_validation(self.db_conn, self._completed_results)
-        export_table_csv(self.db_conn, "validation_issues",
+        insert_validation(conn, self._completed_results)
+        export_table_csv(conn, "validation_issues",
                          self.config.validation_path / "validation_issues.csv")
 
         # 3. 提取结果导出 CSV（规范化表 + 交接用宽表）
-        export_table_csv(self.db_conn, "varieties",
+        export_table_csv(conn, "varieties",
                          self.config.extraction_path / "varieties.csv")
-        export_table_csv(self.db_conn, "studies",
+        export_table_csv(conn, "studies",
                          self.config.extraction_path / "studies.csv")
-        export_table_csv(self.db_conn, "papers",
+        export_table_csv(conn, "papers",
                          self.config.extraction_path / "papers.csv")
-        export_delivery_csv(self.db_conn,
+        export_delivery_csv(conn,
                             self.config.extraction_path / "varieties_flat.csv")
 
         # 4. 覆盖率统计
@@ -257,6 +267,8 @@ class BatchOrchestrator:
             f"Output DB: {self.config.database.host}:{self.config.database.port}"
             f"/{self.config.database.dbname}"
         )
+
+        conn.close()
 
     def _process_one_paper(
         self,
@@ -345,70 +357,70 @@ class BatchOrchestrator:
         title = paper.get("title", "")[:80]
         status = result.get("status", "unknown")
 
-        # 分类结果实时入库（无论论文最终 completed / skipped / failed）
-        cls = result.get("classification")
-        if cls:
-            with self._db_lock:
-                insert_classification(self.db_conn, [cls])
+        # 每个线程使用独立连接，避免事务冲突
+        conn = get_connection(self._db_connection_string)
 
-        # PDF 缺失记录入库
-        if result.get("pdf_missing"):
-            meta = result.get("paper_meta", {})
-            reason = ""
-            errs = result.get("errors", [])
-            if errs:
-                reason = str(errs[-1].get("error", ""))[:500]
-            with self._db_lock:
+        try:
+            # 分类结果实时入库（无论论文最终 completed / skipped / failed）
+            cls = result.get("classification")
+            if cls:
+                insert_classification(conn, [cls])
+
+            # PDF 缺失记录入库
+            if result.get("pdf_missing"):
+                meta = result.get("paper_meta", {})
+                reason = ""
+                errs = result.get("errors", [])
+                if errs:
+                    reason = str(errs[-1].get("error", ""))[:500]
                 insert_pdf_missing(
-                    self.db_conn, pid,
+                    conn, pid,
                     title=meta.get("title", "")[:500],
                     doi=meta.get("doi", ""),
                     reason=reason,
                 )
 
-        full_run_statuses = ("validated", "geocoded", "validated_complete")
-        is_completed = (
-            status in full_run_statuses
-            or (self.stop_after and status not in ("failed", "skipped"))
-        )
+            full_run_statuses = ("validated", "geocoded", "validated_complete")
+            is_completed = (
+                status in full_run_statuses
+                or (self.stop_after and status not in ("failed", "skipped"))
+            )
 
-        if is_completed:
-            self.stats["completed"] += 1
-            self._completed_results.append(result)
+            if is_completed:
+                self.stats["completed"] += 1
+                self._completed_results.append(result)
 
-            if target_step == "extract":
-                with self._db_lock:
-                    insert_extraction(self.db_conn, result, pid)
+                if target_step == "extract":
+                    insert_extraction(conn, result, pid)
 
-            with self._db_lock:
                 update_paper_status(
-                    self.db_conn, pid, title, target_step,
+                    conn, pid, title, target_step,
                     "completed", duration, run_id=self.config.run_id,
                 )
                 # 已成功处理（含 MD 兜底），从 pdf_missing 移除，该表只留当前卡住的
-                delete_pdf_missing(self.db_conn, pid)
-        elif status == "skipped":
-            self.stats["skipped"] += 1
-            skip_reason = ""
-            errs = result.get("errors", [])
-            if errs:
-                skip_reason = str(errs[-1].get("error", ""))[:500]
-            with self._db_lock:
+                delete_pdf_missing(conn, pid)
+            elif status == "skipped":
+                self.stats["skipped"] += 1
+                skip_reason = ""
+                errs = result.get("errors", [])
+                if errs:
+                    skip_reason = str(errs[-1].get("error", ""))[:500]
                 update_paper_status(
-                    self.db_conn, pid, title, target_step,
+                    conn, pid, title, target_step,
                     "skipped", duration, error_message=skip_reason,
                     run_id=self.config.run_id,
                 )
                 # 已被剔除（如非中国论文），视为已解决，从 pdf_missing 移除
-                delete_pdf_missing(self.db_conn, pid)
-        else:
-            self.stats["failed"] += 1
-            error_msg = str(result.get("errors", [{}])[-1].get("error", status))[:500]
-            with self._db_lock:
+                delete_pdf_missing(conn, pid)
+            else:
+                self.stats["failed"] += 1
+                error_msg = str(result.get("errors", [{}])[-1].get("error", status))[:500]
                 update_paper_status(
-                    self.db_conn, pid, title, target_step,
+                    conn, pid, title, target_step,
                     "failed", duration, error_msg, self.config.run_id,
                 )
+        finally:
+            conn.close()
 
         self._log_progress()
 
@@ -456,8 +468,10 @@ class BatchOrchestrator:
             chunk_num += 1
 
             # ── 原子领取一块 pending 论文（含元数据）──
-            with self._db_lock:
-                with self.db_conn.cursor() as cur:
+            # 使用独立连接领取，避免长事务持有连接
+            claim_conn = get_connection(self._db_connection_string)
+            try:
+                with claim_conn.cursor() as cur:
                     cur.execute("""
                         SELECT paper_id, title, ss_paper_id, doi, abstract, year, journal
                         FROM paper_status
@@ -478,7 +492,9 @@ class BatchOrchestrator:
                         WHERE paper_id = ANY(%s)
                     """, (self.instance_id, datetime.now().isoformat(), chunk_ids))
 
-                self.db_conn.commit()
+                claim_conn.commit()
+            finally:
+                claim_conn.close()
 
             # ── 转换为 paper dict ──
             papers = []
@@ -522,11 +538,15 @@ class BatchOrchestrator:
                         title = paper.get("title", "")[:80]
                         logger.error(f"  Paper {pid[:25]} failed: {e}", exc_info=True)
                         self.stats["failed"] += 1
-                        with self._db_lock:
+                        # 异常处理使用独立连接
+                        err_conn = get_connection(self._db_connection_string)
+                        try:
                             update_paper_status(
-                                self.db_conn, pid, title, target_step,
+                                err_conn, pid, title, target_step,
                                 "error", duration, str(e)[:500], self.config.run_id,
                             )
+                        finally:
+                            err_conn.close()
                         self._log_progress()
 
             logger.info(
@@ -543,8 +563,10 @@ class BatchOrchestrator:
             self._generate_outputs(None)
 
         try:
-            table_stats = get_table_stats(self.db_conn)
+            conn = get_connection(self._db_connection_string)
+            table_stats = get_table_stats(conn)
             logger.info(f"Database stats: {table_stats}")
+            conn.close()
         except Exception:
             pass
 
@@ -554,7 +576,6 @@ class BatchOrchestrator:
             f"(total {total_claimed})"
         )
 
-        self.db_conn.close()
         return self.stats
 
     # ── 多实例任务领取 ────────────────────────────────────────
@@ -580,8 +601,10 @@ class BatchOrchestrator:
         paper_ids = [p.get("paper_id", "") for p in papers if p.get("paper_id")]
         now = datetime.now().isoformat()
 
-        with self._db_lock:
-            with self.db_conn.cursor() as cur:
+        # 使用独立连接领取，避免长事务
+        conn = get_connection(self._db_connection_string)
+        try:
+            with conn.cursor() as cur:
                 # 1) 为新论文创建 pending 行；将上次失败/出错的论文重置为 pending（允许重试）
                 for paper in papers:
                     pid = paper.get("paper_id", "")
@@ -614,7 +637,9 @@ class BatchOrchestrator:
                         WHERE paper_id = ANY(%s)
                     """, (self.instance_id, now, list(claimed)))
 
-            self.db_conn.commit()
+            conn.commit()
+        finally:
+            conn.close()
 
         logger.info(
             f"Claimed {len(claimed)}/{len(paper_ids)} papers "
@@ -635,7 +660,9 @@ class BatchOrchestrator:
         返回 {paper_id: target_step}，仅包含 status='completed' 的记录。
         """
         try:
-            with self.db_conn.cursor() as cur:
+            # 使用独立连接
+            conn = get_connection(self._db_connection_string)
+            with conn.cursor() as cur:
                 if paper_ids:
                     cur.execute(
                         "SELECT paper_id, target_step FROM paper_status "
@@ -648,6 +675,7 @@ class BatchOrchestrator:
                         "WHERE status = 'completed'"
                     )
                 registry = {row[0]: row[1] for row in cur.fetchall()}
+            conn.close()
             logger.info(
                 f"Registry: {len(registry)} papers already completed "
                 f"(checked {len(paper_ids) if paper_ids else 'all'} candidates)"
