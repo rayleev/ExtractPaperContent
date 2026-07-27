@@ -473,7 +473,7 @@ class BatchOrchestrator:
             try:
                 with claim_conn.cursor() as cur:
                     cur.execute("""
-                        SELECT paper_id, title, ss_paper_id, doi, abstract, year, journal
+                        SELECT paper_id, title, ss_paper_id, doi, abstract, publication_year, journal
                         FROM paper_status
                         WHERE status = 'pending'
                         ORDER BY paper_id
@@ -505,7 +505,7 @@ class BatchOrchestrator:
                     "ss_paper_id": r[2] or "",
                     "doi": r[3] or "",
                     "abstract": r[4] or "",
-                    "year": r[5] or "",
+                    "publication_year": r[5] or "",
                     "journal": r[6] or "",
                 })
 

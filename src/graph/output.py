@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS paper_status (
     ss_paper_id     TEXT,
     doi             TEXT,
     abstract        TEXT,
-    year            TEXT,
+    publication_year TEXT,
     journal         TEXT
 );
 
@@ -440,7 +440,7 @@ _SCHEMA_DOCS = [
     ("paper_status", "ss_paper_id", "TEXT", "Semantic Scholar paperId（用于 PDF 下载）", 0, "搜索阶段"),
     ("paper_status", "doi", "TEXT", "论文 DOI", 0, "搜索阶段"),
     ("paper_status", "abstract", "TEXT", "论文摘要（用于 LLM 分类）", 0, "搜索阶段"),
-    ("paper_status", "year", "TEXT", "发表年份", 0, "搜索阶段"),
+    ("paper_status", "publication_year", "TEXT", "发表年份", 0, "搜索阶段"),
     ("paper_status", "journal", "TEXT", "期刊名称", 0, "搜索阶段"),
     # ── pdf_missing 表 ──
     ("pdf_missing", "paper_id", "TEXT", "论文唯一标识", 1, "系统生成"),
@@ -804,7 +804,7 @@ def insert_search_results(conn, papers: List[dict]) -> int:
             cur.execute("""
                 INSERT INTO paper_status
                     (paper_id, title, status, updated_at,
-                     ss_paper_id, doi, abstract, year, journal)
+                     ss_paper_id, doi, abstract, publication_year, journal)
                 VALUES (%s, %s, 'pending', %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (paper_id) DO NOTHING
             """, (
@@ -814,7 +814,7 @@ def insert_search_results(conn, papers: List[dict]) -> int:
                 p.get("ss_paper_id", ""),
                 p.get("doi", ""),
                 p.get("abstract", ""),
-                p.get("year", ""),
+                p.get("publication_year", ""),
                 p.get("journal", ""),
             ))
             inserted += cur.rowcount
