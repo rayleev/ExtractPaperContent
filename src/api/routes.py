@@ -385,7 +385,7 @@ def stop_pipeline():
         conn = get_connection(config.database.connection_string)
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE paper_status SET status = 'pending', claimed_by = NULL, updated_at = %s "
+                "UPDATE pe_reg_paper_status SET status = 'pending', claimed_by = NULL, updated_at = %s "
                 "WHERE status = 'processing' AND claimed_by = %s",
                 (datetime.now().isoformat(), instance_id),
             )
@@ -488,13 +488,13 @@ def get_paper_statuses(
             if status:
                 cur.execute(
                     "SELECT paper_id, title, target_step, status, duration_sec, error_message, updated_at "
-                    "FROM paper_status WHERE status = %s ORDER BY updated_at DESC LIMIT %s",
+                    "FROM pe_reg_paper_status WHERE status = %s ORDER BY updated_at DESC LIMIT %s",
                     (status, limit),
                 )
             else:
                 cur.execute(
                     "SELECT paper_id, title, target_step, status, duration_sec, error_message, updated_at "
-                    "FROM paper_status ORDER BY updated_at DESC LIMIT %s",
+                    "FROM pe_reg_paper_status ORDER BY updated_at DESC LIMIT %s",
                     (limit,),
                 )
             rows = cur.fetchall()
@@ -525,7 +525,7 @@ def get_paper_status(paper_id: str):
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT paper_id, title, target_step, status, duration_sec, error_message, updated_at "
-                "FROM paper_status WHERE paper_id = %s",
+                "FROM pe_reg_paper_status WHERE paper_id = %s",
                 (paper_id,),
             )
             row = cur.fetchone()

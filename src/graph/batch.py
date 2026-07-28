@@ -210,8 +210,8 @@ class BatchOrchestrator:
                 # 使用独立连接
                 cls_conn = get_connection(self._db_connection_string)
                 insert_classification(cls_conn, cls_records)
-                export_table_csv(cls_conn, "classification",
-                                 self.config.classification_path / "classification.csv")
+                export_table_csv(cls_conn, "pe_aud_classification",
+                                 self.config.classification_path / "pe_aud_classification.csv")
                 cls_conn.close()
 
         # 打印 DB 统计
@@ -241,21 +241,21 @@ class BatchOrchestrator:
         # 1. 分类结果写入 DB + 导出 CSV
         if classifications:
             insert_classification(conn, classifications)
-            export_table_csv(conn, "classification",
-                             self.config.classification_path / "classification.csv")
+            export_table_csv(conn, "pe_aud_classification",
+                             self.config.classification_path / "pe_aud_classification.csv")
 
         # 2. 验证报告写入 DB + 导出 CSV
         insert_validation(conn, self._completed_results)
-        export_table_csv(conn, "validation_issues",
-                         self.config.validation_path / "validation_issues.csv")
+        export_table_csv(conn, "pe_aud_validation_issues",
+                         self.config.validation_path / "pe_aud_validation_issues.csv")
 
         # 3. 提取结果导出 CSV（规范化表 + 交接用宽表）
-        export_table_csv(conn, "varieties",
-                         self.config.extraction_path / "varieties.csv")
-        export_table_csv(conn, "studies",
-                         self.config.extraction_path / "studies.csv")
-        export_table_csv(conn, "papers",
-                         self.config.extraction_path / "papers.csv")
+        export_table_csv(conn, "pe_core_varieties",
+                         self.config.extraction_path / "pe_core_varieties.csv")
+        export_table_csv(conn, "pe_core_studies",
+                         self.config.extraction_path / "pe_core_studies.csv")
+        export_table_csv(conn, "pe_core_papers",
+                         self.config.extraction_path / "pe_core_papers.csv")
         export_delivery_csv(conn,
                             self.config.extraction_path / "varieties_flat.csv")
 
@@ -474,7 +474,7 @@ class BatchOrchestrator:
                 with claim_conn.cursor() as cur:
                     cur.execute("""
                         SELECT paper_id, title, ss_paper_id, doi, abstract, publication_year, journal
-                        FROM paper_status
+                        FROM pe_reg_paper_status
                         WHERE status = 'pending'
                         ORDER BY paper_id
                         LIMIT %s
@@ -487,7 +487,7 @@ class BatchOrchestrator:
 
                     chunk_ids = [r[0] for r in rows]
                     cur.execute("""
-                        UPDATE paper_status
+                        UPDATE pe_reg_paper_status
                         SET status = 'processing', claimed_by = %s, updated_at = %s
                         WHERE paper_id = ANY(%s)
                     """, (self.instance_id, datetime.now().isoformat(), chunk_ids))
@@ -612,18 +612,18 @@ class BatchOrchestrator:
                     if not pid:
                         continue
                     cur.execute("""
-                        INSERT INTO paper_status (paper_id, title, status, updated_at)
+                        INSERT INTO pe_reg_paper_status (paper_id, title, status, updated_at)
                         VALUES (%s, %s, 'pending', %s)
                         ON CONFLICT (paper_id) DO UPDATE SET
                             status = 'pending',
                             claimed_by = NULL,
                             updated_at = %s
-                        WHERE paper_status.status IN ('failed', 'error')
+                        WHERE pe_reg_paper_status.status IN ('failed', 'error')
                     """, (pid, title, now, now))
 
                 # 2) 行锁领取：SKIP LOCKED 自动跳过被其他实例锁住的行
                 cur.execute("""
-                    SELECT paper_id FROM paper_status
+                    SELECT paper_id FROM pe_reg_paper_status
                     WHERE paper_id = ANY(%s) AND status = 'pending'
                     FOR UPDATE SKIP LOCKED
                 """, (paper_ids,))
@@ -632,7 +632,7 @@ class BatchOrchestrator:
                 # 3) 标记为 processing，记录领取者
                 if claimed:
                     cur.execute("""
-                        UPDATE paper_status
+                        UPDATE pe_reg_paper_status
                         SET status = 'processing', claimed_by = %s, updated_at = %s
                         WHERE paper_id = ANY(%s)
                     """, (self.instance_id, now, list(claimed)))
@@ -665,13 +665,13 @@ class BatchOrchestrator:
             with conn.cursor() as cur:
                 if paper_ids:
                     cur.execute(
-                        "SELECT paper_id, target_step FROM paper_status "
+                        "SELECT paper_id, target_step FROM pe_reg_paper_status "
                         "WHERE status = 'completed' AND paper_id = ANY(%s)",
                         (paper_ids,),
                     )
                 else:
                     cur.execute(
-                        "SELECT paper_id, target_step FROM paper_status "
+                        "SELECT paper_id, target_step FROM pe_reg_paper_status "
                         "WHERE status = 'completed'"
                     )
                 registry = {row[0]: row[1] for row in cur.fetchall()}

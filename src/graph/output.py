@@ -43,14 +43,13 @@ logger = logging.getLogger("paper_extractor")
 
 _SCHEMA = """
 -- 论文级数据
-CREATE TABLE IF NOT EXISTS papers (
+CREATE TABLE IF NOT EXISTS pe_core_papers (
     paper_id        TEXT PRIMARY KEY,
     doi             TEXT,
     title           TEXT,
     publication_year INTEGER,
     journal_name    TEXT,
     crop_species    TEXT,
-    language        TEXT,
     category        TEXT,
     data_file_link  TEXT,
     data_file_description TEXT,
@@ -60,7 +59,7 @@ CREATE TABLE IF NOT EXISTS papers (
 );
 
 -- 试验级数据
-CREATE TABLE IF NOT EXISTS studies (
+CREATE TABLE IF NOT EXISTS pe_core_studies (
     paper_id        TEXT NOT NULL,
     study_index     INTEGER NOT NULL,
     study_title     TEXT,
@@ -87,7 +86,7 @@ CREATE TABLE IF NOT EXISTS studies (
 );
 
 -- 品种产量数据（主数据表）
-CREATE TABLE IF NOT EXISTS varieties (
+CREATE TABLE IF NOT EXISTS pe_core_varieties (
     paper_id        TEXT NOT NULL,
     study_index     INTEGER NOT NULL,
     variety_index   INTEGER NOT NULL,
@@ -118,7 +117,6 @@ CREATE TABLE IF NOT EXISTS varieties_flat (
     publication_year INTEGER,
     journal_name    TEXT,
     crop_species    TEXT,
-    language        TEXT,
     category        TEXT,
     study_title     TEXT,
     trial_year      TEXT,
@@ -158,9 +156,8 @@ CREATE TABLE IF NOT EXISTS varieties_flat (
 );
 
 -- 论文分类结果
-CREATE TABLE IF NOT EXISTS classification (
+CREATE TABLE IF NOT EXISTS pe_aud_classification (
     paper_id        TEXT PRIMARY KEY,
-    language        TEXT,
     category        TEXT,
     confidence      DOUBLE PRECISION,
     reasoning       TEXT,
@@ -172,7 +169,7 @@ CREATE TABLE IF NOT EXISTS classification (
 );
 
 -- 验证问题明细（扁平化）
-CREATE TABLE IF NOT EXISTS validation_issues (
+CREATE TABLE IF NOT EXISTS pe_aud_validation_issues (
     id              SERIAL PRIMARY KEY,
     paper_id        TEXT NOT NULL,
     issue_type      TEXT NOT NULL,
@@ -182,7 +179,7 @@ CREATE TABLE IF NOT EXISTS validation_issues (
 );
 
 -- 证据验证明细
-CREATE TABLE IF NOT EXISTS evidence (
+CREATE TABLE IF NOT EXISTS pe_aud_evidence (
     id              SERIAL PRIMARY KEY,
     paper_id        TEXT NOT NULL,
     field_name      TEXT NOT NULL,
@@ -196,7 +193,7 @@ CREATE TABLE IF NOT EXISTS evidence (
 );
 
 -- 论文处理状态（兼任务协调注册表）
-CREATE TABLE IF NOT EXISTS paper_status (
+CREATE TABLE IF NOT EXISTS pe_reg_paper_status (
     paper_id        TEXT PRIMARY KEY,
     title           TEXT,
     target_step     TEXT,
@@ -215,7 +212,7 @@ CREATE TABLE IF NOT EXISTS paper_status (
 );
 
 -- 无法获取 PDF 的论文记录
-CREATE TABLE IF NOT EXISTS pdf_missing (
+CREATE TABLE IF NOT EXISTS pe_log_pdf_missing (
     paper_id        TEXT PRIMARY KEY,
     title           TEXT,
     doi             TEXT,
@@ -224,19 +221,19 @@ CREATE TABLE IF NOT EXISTS pdf_missing (
 );
 
 -- 索引
-CREATE INDEX IF NOT EXISTS idx_varieties_name ON varieties(variety_name);
-CREATE INDEX IF NOT EXISTS idx_varieties_paper ON varieties(paper_id);
-CREATE INDEX IF NOT EXISTS idx_studies_paper ON studies(paper_id);
-CREATE INDEX IF NOT EXISTS idx_studies_region ON studies(site_administrative_region);
-CREATE INDEX IF NOT EXISTS idx_studies_year ON studies(trial_year);
-CREATE INDEX IF NOT EXISTS idx_classification_cat ON classification(category);
-CREATE INDEX IF NOT EXISTS idx_validation_paper ON validation_issues(paper_id);
-CREATE INDEX IF NOT EXISTS idx_validation_severity ON validation_issues(severity);
-CREATE INDEX IF NOT EXISTS idx_evidence_paper ON evidence(paper_id);
-CREATE INDEX IF NOT EXISTS idx_evidence_field ON evidence(field_name);
-CREATE INDEX IF NOT EXISTS idx_paper_status ON paper_status(status);
-CREATE INDEX IF NOT EXISTS idx_paper_status_claimed ON paper_status(claimed_by);
-CREATE INDEX IF NOT EXISTS idx_pdf_missing ON pdf_missing(paper_id);
+CREATE INDEX IF NOT EXISTS idx_pe_core_varieties_name ON pe_core_varieties(variety_name);
+CREATE INDEX IF NOT EXISTS idx_pe_core_varieties_paper ON pe_core_varieties(paper_id);
+CREATE INDEX IF NOT EXISTS idx_pe_core_studies_paper ON pe_core_studies(paper_id);
+CREATE INDEX IF NOT EXISTS idx_pe_core_studies_region ON pe_core_studies(site_administrative_region);
+CREATE INDEX IF NOT EXISTS idx_pe_core_studies_year ON pe_core_studies(trial_year);
+CREATE INDEX IF NOT EXISTS idx_pe_aud_classification_cat ON pe_aud_classification(category);
+CREATE INDEX IF NOT EXISTS idx_pe_aud_validation_paper ON pe_aud_validation_issues(paper_id);
+CREATE INDEX IF NOT EXISTS idx_pe_aud_validation_severity ON pe_aud_validation_issues(severity);
+CREATE INDEX IF NOT EXISTS idx_pe_aud_evidence_paper ON pe_aud_evidence(paper_id);
+CREATE INDEX IF NOT EXISTS idx_pe_aud_evidence_field ON pe_aud_evidence(field_name);
+CREATE INDEX IF NOT EXISTS idx_pe_reg_paper_status ON pe_reg_paper_status(status);
+CREATE INDEX IF NOT EXISTS idx_pe_reg_paper_status_claimed ON pe_reg_paper_status(claimed_by);
+CREATE INDEX IF NOT EXISTS idx_pe_log_pdf_missing ON pe_log_pdf_missing(paper_id);
 """
 
 
@@ -271,11 +268,11 @@ def init_database(connection_string: str):
         # ── 迁移：旧版 classification 表含 title/doi/year/journal 冗余列，检测并重建 ──
         cur.execute("""
             SELECT 1 FROM information_schema.columns
-            WHERE table_name = 'classification' AND column_name = 'doi'
+            WHERE table_name = 'pe_aud_classification' AND column_name = 'doi'
         """)
         if cur.fetchone():
-            cur.execute("DROP TABLE classification")
-            logger.info("Dropped legacy classification table (removed redundant doi/title/year/journal columns)")
+            cur.execute("DROP TABLE pe_aud_classification")
+            logger.info("Dropped legacy pe_aud_classification table (removed redundant doi/title/year/journal columns)")
 
         for raw_statement in _SCHEMA.strip().split(";"):
             # 去除前导注释行（-- 开头的行），保留实际 SQL
@@ -285,13 +282,13 @@ def init_database(connection_string: str):
             if statement:
                 cur.execute(statement)
 
-        # 兼容已有数据库：为 paper_status 补充搜索元数据列
+        # 兼容已有数据库：为 pe_reg_paper_status 补充搜索元数据列
         for col, col_type in [
             ("ss_paper_id", "TEXT"), ("doi", "TEXT"),
             ("abstract", "TEXT"), ("year", "TEXT"), ("journal", "TEXT"),
         ]:
             cur.execute(
-                f"ALTER TABLE paper_status ADD COLUMN IF NOT EXISTS {col} {col_type}"
+                f"ALTER TABLE pe_reg_paper_status ADD COLUMN IF NOT EXISTS {col} {col_type}"
             )
 
     conn.commit()
@@ -303,76 +300,75 @@ def init_database(connection_string: str):
 # ── 表级注释 ──────────────────────────────────────────────
 
 _TABLE_COMMENTS = {
-    "papers": "论文级数据（一篇一行），doi/title/year/journal 来自搜索元数据",
-    "studies": "试验级数据（一篇论文多行），一年×一站 = 一个试验",
-    "varieties": "品种产量数据（主数据表），一行 = 一个品种×一个试验",
+    "pe_core_papers": "论文级数据（一篇一行），doi/title/year/journal 来自搜索元数据",
+    "pe_core_studies": "试验级数据（一篇论文多行），一年×一站 = 一个试验",
+    "pe_core_varieties": "品种产量数据（主数据表），一行 = 一个品种×一个试验",
     "varieties_flat": "品种产量宽表（扁平化交接用），每行含 paper+study+variety 全部字段",
-    "classification": "论文分类结果（5类），paper_id FK → paper_status",
-    "validation_issues": "验证问题明细（扁平化），issue=严重/warning=警告",
-    "evidence": "证据验证明细（字段来源追溯）",
-    "paper_status": "论文处理状态（兼任务协调注册表+搜索元数据存储）",
-    "pdf_missing": "无法获取 PDF 的论文记录",
+    "pe_aud_classification": "论文分类结果（5类），paper_id FK → pe_reg_paper_status",
+    "pe_aud_validation_issues": "验证问题明细（扁平化），issue=严重/warning=警告",
+    "pe_aud_evidence": "证据验证明细（字段来源追溯）",
+    "pe_reg_paper_status": "论文处理状态（兼任务协调注册表+搜索元数据存储）",
+    "pe_log_pdf_missing": "无法获取 PDF 的论文记录",
 }
 
 
 # ── 字段文档 ──────────────────────────────────────────────
 
 _SCHEMA_DOCS = [
-    # ── papers 表 ──
-    ("papers", "paper_id", "TEXT", "论文唯一标识（P_ + MD5指纹前10位）", 1, "系统生成"),
-    ("papers", "doi", "TEXT", "论文 DOI", 0, "搜索元数据"),
-    ("papers", "title", "TEXT", "论文完整标题", 1, "搜索元数据"),
-    ("papers", "publication_year", "INTEGER", "发表年份", 1, "搜索元数据"),
-    ("papers", "journal_name", "TEXT", "期刊/来源名称", 0, "搜索元数据"),
-    ("papers", "crop_species", "TEXT", "作物物种，如'水稻/Rice'", 1, "LLM提取"),
-    ("papers", "language", "TEXT", "论文语言（zh/en）", 0, "系统检测"),
-    ("papers", "category", "TEXT", "论文分类（varietal_yield/management_yield等）", 0, "LLM分类"),
-    ("papers", "data_file_link", "TEXT", "公共数据库中的数据文件链接", 0, "LLM提取"),
-    ("papers", "data_file_description", "TEXT", "数据文件格式说明", 0, "LLM提取"),
-    ("papers", "data_file_version", "TEXT", "数据集版本号", 0, "LLM提取"),
-    ("papers", "extracted_at", "TEXT", "提取时间（ISO 8601）", 0, "系统生成"),
-    ("papers", "parse_context", "JSONB", "parse 节点输出（作物列表、品种共用关系等）", 0, "LLM提取"),
-    # ── studies 表 ──
-    ("studies", "paper_id", "TEXT", "关联论文ID", 1, "外键"),
-    ("studies", "study_index", "INTEGER", "试验在论文中的序号（0起始）", 1, "系统生成"),
-    ("studies", "study_title", "TEXT", "试验名称/标题", 1, "LLM提取"),
-    ("studies", "study_description", "TEXT", "试验简述（1-2句话）", 0, "LLM提取"),
-    ("studies", "trial_year", "TEXT", "试验年份或期间，如'2022'或'2022-2025'", 1, "LLM提取"),
-    ("studies", "sowing_date", "TEXT", "播种日期（ISO 8601）", 0, "LLM提取"),
-    ("studies", "harvest_date", "TEXT", "收获日期（ISO 8601）", 0, "LLM提取"),
-    ("studies", "country", "TEXT", "试验所在国家（ISO 3166代码），如CN", 1, "LLM提取"),
-    ("studies", "site_administrative_region", "TEXT", "试验点行政区划（省/市/县）", 1, "LLM提取"),
-    ("studies", "experimental_site_name", "TEXT", "试验站/试验地点名称", 0, "LLM提取"),
-    ("studies", "latitude", "DOUBLE PRECISION", "纬度（仅论文明确写出时）", 0, "LLM/地理编码"),
-    ("studies", "longitude", "DOUBLE PRECISION", "经度（仅论文明确写出时）", 0, "LLM/地理编码"),
-    ("studies", "altitude", "DOUBLE PRECISION", "海拔/米（仅论文明确写出时）", 0, "LLM/地理编码"),
-    ("studies", "geo_source", "TEXT", "坐标来源: paper/lookup/baidu/nominatim/province_fallback", 0, "系统标注"),
-    ("studies", "replication_number", "INTEGER", "田间试验重复次数", 0, "LLM提取"),
-    ("studies", "plot_size", "TEXT", "小区面积，如'13.3 m²'", 0, "LLM提取"),
-    ("studies", "planting_density", "TEXT", "种植密度，如'22.5万穴/公顷'", 0, "LLM提取"),
-    ("studies", "experimental_design_description", "TEXT", "试验设计的文字描述", 1, "LLM提取"),
-    ("studies", "experimental_design_type", "TEXT", "试验设计类型: RCBD/Split-plot/CRD/Unknown", 0, "LLM提取"),
-    ("studies", "growth_facility_description", "TEXT", "试验环境描述，如'大田环境'、'温室'", 0, "LLM提取"),
-    ("studies", "cultural_practices", "TEXT", "栽培管理措施描述", 0, "LLM提取"),
-    ("studies", "notes", "TEXT", "系统自动生成的数据质量备注（如多站点标记）", 0, "系统生成"),
-    # ── varieties 表 ──
-    ("varieties", "paper_id", "TEXT", "关联论文ID", 1, "外键"),
-    ("varieties", "study_index", "INTEGER", "关联试验序号", 1, "外键"),
-    ("varieties", "variety_index", "INTEGER", "品种在试验中的序号（0起始）", 1, "系统生成"),
-    ("varieties", "variety_name", "TEXT", "品种/品系完整名称（含编号）", 1, "LLM提取"),
-    ("varieties", "variety_code", "TEXT", "品种审定编号（跨文献实体解析键）", 0, "LLM/系统回填"),
-    ("varieties", "is_check_variety", "INTEGER", "是否为对照(CK)品种（1=是, 0=否）", 1, "LLM提取"),
-    ("varieties", "variety_source", "TEXT", "育种单位/来源", 0, "LLM提取"),
-    ("varieties", "yield_raw_value", "DOUBLE PRECISION", "论文中的原始产量数值", 1, "LLM提取"),
-    ("varieties", "yield_raw_unit", "TEXT", "原始产量单位，如kg/亩、kg/ha", 1, "LLM提取"),
-    ("varieties", "yield_standard_value", "DOUBLE PRECISION", "程序换算的kg/ha值", 0, "程序计算"),
-    ("varieties", "yield_standard_unit", "TEXT", "标准单位，固定kg/ha", 0, "程序固定"),
-    ("varieties", "yield_value_type", "TEXT", "产量值统计类型: plot_mean/single_replicate/converted", 1, "LLM提取"),
-    ("varieties", "significance_group", "TEXT", "显著性字母标记，如a/b/ab", 0, "LLM提取"),
-    ("varieties", "pct_over_check", "DOUBLE PRECISION", "相对对照品种的增产/减产百分比", 0, "LLM提取"),
-    ("varieties", "measurement_method", "TEXT", "产量测定与计产方法", 0, "LLM提取"),
-    ("varieties", "source_location", "TEXT", "数据来源位置：论文中的表格或段落，如'表5'", 1, "LLM提取"),
-    ("varieties", "confidence_level", "TEXT", "提取置信度: high/medium/low", 1, "LLM评估"),
+    # ── pe_core_papers 表 ──
+    ("pe_core_papers", "paper_id", "TEXT", "论文唯一标识（P_ + MD5指纹前10位）", 1, "系统生成"),
+    ("pe_core_papers", "doi", "TEXT", "论文 DOI", 0, "搜索元数据"),
+    ("pe_core_papers", "title", "TEXT", "论文完整标题", 1, "搜索元数据"),
+    ("pe_core_papers", "publication_year", "INTEGER", "发表年份", 1, "搜索元数据"),
+    ("pe_core_papers", "journal_name", "TEXT", "期刊/来源名称", 0, "搜索元数据"),
+    ("pe_core_papers", "crop_species", "TEXT", "作物物种，如'水稻/Rice'", 1, "LLM提取"),
+    ("pe_core_papers", "category", "TEXT", "论文分类（varietal_yield/management_yield等）", 0, "LLM分类"),
+    ("pe_core_papers", "data_file_link", "TEXT", "公共数据库中的数据文件链接", 0, "LLM提取"),
+    ("pe_core_papers", "data_file_description", "TEXT", "数据文件格式说明", 0, "LLM提取"),
+    ("pe_core_papers", "data_file_version", "TEXT", "数据集版本号", 0, "LLM提取"),
+    ("pe_core_papers", "extracted_at", "TEXT", "提取时间（ISO 8601）", 0, "系统生成"),
+    ("pe_core_papers", "parse_context", "JSONB", "parse 节点输出（作物列表、品种共用关系等）", 0, "LLM提取"),
+    # ── pe_core_studies 表 ──
+    ("pe_core_studies", "paper_id", "TEXT", "关联论文ID", 1, "外键"),
+    ("pe_core_studies", "study_index", "INTEGER", "试验在论文中的序号（0起始）", 1, "系统生成"),
+    ("pe_core_studies", "study_title", "TEXT", "试验名称/标题", 1, "LLM提取"),
+    ("pe_core_studies", "study_description", "TEXT", "试验简述（1-2句话）", 0, "LLM提取"),
+    ("pe_core_studies", "trial_year", "TEXT", "试验年份或期间，如'2022'或'2022-2025'", 1, "LLM提取"),
+    ("pe_core_studies", "sowing_date", "TEXT", "播种日期（ISO 8601）", 0, "LLM提取"),
+    ("pe_core_studies", "harvest_date", "TEXT", "收获日期（ISO 8601）", 0, "LLM提取"),
+    ("pe_core_studies", "country", "TEXT", "试验所在国家（ISO 3166代码），如CN", 1, "LLM提取"),
+    ("pe_core_studies", "site_administrative_region", "TEXT", "试验点行政区划（省/市/县）", 1, "LLM提取"),
+    ("pe_core_studies", "experimental_site_name", "TEXT", "试验站/试验地点名称", 0, "LLM提取"),
+    ("pe_core_studies", "latitude", "DOUBLE PRECISION", "纬度（仅论文明确写出时）", 0, "LLM/地理编码"),
+    ("pe_core_studies", "longitude", "DOUBLE PRECISION", "经度（仅论文明确写出时）", 0, "LLM/地理编码"),
+    ("pe_core_studies", "altitude", "DOUBLE PRECISION", "海拔/米（仅论文明确写出时）", 0, "LLM/地理编码"),
+    ("pe_core_studies", "geo_source", "TEXT", "坐标来源: paper/lookup/baidu/nominatim/province_fallback", 0, "系统标注"),
+    ("pe_core_studies", "replication_number", "INTEGER", "田间试验重复次数", 0, "LLM提取"),
+    ("pe_core_studies", "plot_size", "TEXT", "小区面积，如'13.3 m²'", 0, "LLM提取"),
+    ("pe_core_studies", "planting_density", "TEXT", "种植密度，如'22.5万穴/公顷'", 0, "LLM提取"),
+    ("pe_core_studies", "experimental_design_description", "TEXT", "试验设计的文字描述", 1, "LLM提取"),
+    ("pe_core_studies", "experimental_design_type", "TEXT", "试验设计类型: RCBD/Split-plot/CRD/Unknown", 0, "LLM提取"),
+    ("pe_core_studies", "growth_facility_description", "TEXT", "试验环境描述，如'大田环境'、'温室'", 0, "LLM提取"),
+    ("pe_core_studies", "cultural_practices", "TEXT", "栽培管理措施描述", 0, "LLM提取"),
+    ("pe_core_studies", "notes", "TEXT", "系统自动生成的数据质量备注（如多站点标记）", 0, "系统生成"),
+    # ── pe_core_varieties 表 ──
+    ("pe_core_varieties", "paper_id", "TEXT", "关联论文ID", 1, "外键"),
+    ("pe_core_varieties", "study_index", "INTEGER", "关联试验序号", 1, "外键"),
+    ("pe_core_varieties", "variety_index", "INTEGER", "品种在试验中的序号（0起始）", 1, "系统生成"),
+    ("pe_core_varieties", "variety_name", "TEXT", "品种/品系完整名称（含编号）", 1, "LLM提取"),
+    ("pe_core_varieties", "variety_code", "TEXT", "品种审定编号（跨文献实体解析键）", 0, "LLM/系统回填"),
+    ("pe_core_varieties", "is_check_variety", "INTEGER", "是否为对照(CK)品种（1=是, 0=否）", 1, "LLM提取"),
+    ("pe_core_varieties", "variety_source", "TEXT", "育种单位/来源", 0, "LLM提取"),
+    ("pe_core_varieties", "yield_raw_value", "DOUBLE PRECISION", "论文中的原始产量数值", 1, "LLM提取"),
+    ("pe_core_varieties", "yield_raw_unit", "TEXT", "原始产量单位，如kg/亩、kg/ha", 1, "LLM提取"),
+    ("pe_core_varieties", "yield_standard_value", "DOUBLE PRECISION", "程序换算的kg/ha值", 0, "程序计算"),
+    ("pe_core_varieties", "yield_standard_unit", "TEXT", "标准单位，固定kg/ha", 0, "程序固定"),
+    ("pe_core_varieties", "yield_value_type", "TEXT", "产量值统计类型: plot_mean/single_replicate/converted", 1, "LLM提取"),
+    ("pe_core_varieties", "significance_group", "TEXT", "显著性字母标记，如a/b/ab", 0, "LLM提取"),
+    ("pe_core_varieties", "pct_over_check", "DOUBLE PRECISION", "相对对照品种的增产/减产百分比", 0, "LLM提取"),
+    ("pe_core_varieties", "measurement_method", "TEXT", "产量测定与计产方法", 0, "LLM提取"),
+    ("pe_core_varieties", "source_location", "TEXT", "数据来源位置：论文中的表格或段落，如'表5'", 1, "LLM提取"),
+    ("pe_core_varieties", "confidence_level", "TEXT", "提取置信度: high/medium/low", 1, "LLM评估"),
     # ── varieties_flat 宽表（全部字段，与 CREATE TABLE 一一对应）──
     ("varieties_flat", "paper_id", "TEXT", "论文唯一标识", 1, "系统生成"),
     ("varieties_flat", "study_index", "INTEGER", "试验序号", 1, "系统生成"),
@@ -382,7 +378,6 @@ _SCHEMA_DOCS = [
     ("varieties_flat", "publication_year", "INTEGER", "发表年份", 1, "搜索元数据"),
     ("varieties_flat", "journal_name", "TEXT", "期刊名称", 0, "搜索元数据"),
     ("varieties_flat", "crop_species", "TEXT", "作物物种", 1, "LLM提取"),
-    ("varieties_flat", "language", "TEXT", "论文语言", 0, "系统检测"),
     ("varieties_flat", "category", "TEXT", "论文分类", 0, "LLM分类"),
     ("varieties_flat", "study_title", "TEXT", "试验名称", 1, "LLM提取"),
     ("varieties_flat", "trial_year", "TEXT", "试验年份", 1, "LLM提取"),
@@ -418,56 +413,55 @@ _SCHEMA_DOCS = [
     ("varieties_flat", "source_location", "TEXT", "数据来源位置（如'表5'）", 1, "LLM提取"),
     ("varieties_flat", "confidence_level", "TEXT", "提取置信度: high/medium/low", 1, "LLM评估"),
     ("varieties_flat", "extracted_at", "TEXT", "提取时间（ISO 8601）", 0, "系统生成"),
-    # ── classification 表 ──
-    ("classification", "paper_id", "TEXT", "论文唯一标识（FK → paper_status）", 1, "系统生成"),
-    ("classification", "language", "TEXT", "论文语言", 0, "系统检测"),
-    ("classification", "category", "TEXT", "分类结果（5类之一）", 1, "LLM分类"),
-    ("classification", "confidence", "DOUBLE PRECISION", "分类置信度（0-1）", 0, "LLM评估"),
-    ("classification", "reasoning", "TEXT", "分类判断依据", 0, "LLM生成"),
-    ("classification", "key_signals", "TEXT", "支持分类的关键信号（JSON数组）", 0, "LLM生成"),
-    ("classification", "crop_species", "TEXT", "作物物种", 0, "LLM识别"),
-    ("classification", "paper_type", "TEXT", "论文类型（期刊/学位/综述/会议）", 0, "LLM识别"),
-    ("classification", "has_yield_data", "INTEGER", "是否包含产量数据（1=是, 0=否）", 0, "LLM判断"),
-    ("classification", "research_country", "TEXT", "研究国家（China/Unknown等）", 0, "LLM判断"),
-    # ── validation_issues 表 ──
-    ("validation_issues", "id", "SERIAL", "自增主键", 1, "系统生成"),
-    ("validation_issues", "paper_id", "TEXT", "关联论文ID", 1, "外键"),
-    ("validation_issues", "issue_type", "TEXT", "问题类型: issue（严重）/ warning（警告）", 1, "规则引擎"),
-    ("validation_issues", "severity", "TEXT", "严重级别: error / warning", 1, "规则引擎"),
-    ("validation_issues", "code", "TEXT", "问题编码（如 YIELD_001）", 0, "规则引擎"),
-    ("validation_issues", "message", "TEXT", "问题描述（含具体数值和上下文）", 1, "规则引擎"),
-    # ── evidence 表 ──
-    ("evidence", "id", "SERIAL", "自增主键", 1, "系统生成"),
-    ("evidence", "paper_id", "TEXT", "关联论文ID", 1, "外键"),
-    ("evidence", "field_name", "TEXT", "字段名（如 variety_name）", 1, "配置"),
-    ("evidence", "field_value", "TEXT", "字段值", 0, "LLM提取"),
-    ("evidence", "source_location", "TEXT", "来源位置（如'表3'）", 0, "LLM验证"),
-    ("evidence", "source_text", "TEXT", "原文片段", 0, "LLM验证"),
-    ("evidence", "confidence", "TEXT", "置信度: high/medium/low", 0, "LLM评估"),
-    ("evidence", "verified", "INTEGER", "是否通过验证（1=是, 0=否）", 0, "LLM验证"),
-    ("evidence", "reason", "TEXT", "判断原因", 0, "LLM生成"),
-    ("evidence", "created_at", "TEXT", "创建时间（ISO 8601）", 1, "系统生成"),
-    # ── paper_status 表 ──
-    ("paper_status", "paper_id", "TEXT", "论文唯一标识", 1, "系统生成"),
-    ("paper_status", "title", "TEXT", "论文标题（截取前80字符）", 0, "元数据"),
-    ("paper_status", "target_step", "TEXT", "本次运行的目标步骤（classify/parse/extract）", 1, "用户指定"),
-    ("paper_status", "status", "TEXT", "处理状态: pending/processing/completed/failed/skipped", 1, "系统记录"),
-    ("paper_status", "claimed_by", "TEXT", "领取该任务的实例ID", 0, "系统记录"),
-    ("paper_status", "duration_sec", "DOUBLE PRECISION", "处理耗时（秒）", 0, "系统记录"),
-    ("paper_status", "error_message", "TEXT", "错误信息（失败时）", 0, "系统记录"),
-    ("paper_status", "run_id", "TEXT", "本次运行ID（时间戳）", 0, "系统生成"),
-    ("paper_status", "updated_at", "TEXT", "最后更新时间（ISO 8601）", 0, "系统生成"),
-    ("paper_status", "ss_paper_id", "TEXT", "Semantic Scholar paperId（用于 PDF 下载）", 0, "搜索阶段"),
-    ("paper_status", "doi", "TEXT", "论文 DOI", 0, "搜索阶段"),
-    ("paper_status", "abstract", "TEXT", "论文摘要（用于 LLM 分类）", 0, "搜索阶段"),
-    ("paper_status", "publication_year", "TEXT", "发表年份", 0, "搜索阶段"),
-    ("paper_status", "journal", "TEXT", "期刊名称", 0, "搜索阶段"),
-    # ── pdf_missing 表 ──
-    ("pdf_missing", "paper_id", "TEXT", "论文唯一标识", 1, "系统生成"),
-    ("pdf_missing", "title", "TEXT", "论文标题", 0, "元数据"),
-    ("pdf_missing", "doi", "TEXT", "论文DOI", 0, "元数据"),
-    ("pdf_missing", "reason", "TEXT", "下载失败原因（404/timeout/error）", 1, "系统记录"),
-    ("pdf_missing", "attempted_at", "TEXT", "尝试下载时间（ISO 8601）", 0, "系统生成"),
+    # ── pe_aud_classification 表 ──
+    ("pe_aud_classification", "paper_id", "TEXT", "论文唯一标识（FK → pe_reg_paper_status）", 1, "系统生成"),
+    ("pe_aud_classification", "category", "TEXT", "分类结果（5类之一）", 1, "LLM分类"),
+    ("pe_aud_classification", "confidence", "DOUBLE PRECISION", "分类置信度（0-1）", 0, "LLM评估"),
+    ("pe_aud_classification", "reasoning", "TEXT", "分类判断依据", 0, "LLM生成"),
+    ("pe_aud_classification", "key_signals", "TEXT", "支持分类的关键信号（JSON数组）", 0, "LLM生成"),
+    ("pe_aud_classification", "crop_species", "TEXT", "作物物种", 0, "LLM识别"),
+    ("pe_aud_classification", "paper_type", "TEXT", "论文类型（期刊/学位/综述/会议）", 0, "LLM识别"),
+    ("pe_aud_classification", "has_yield_data", "INTEGER", "是否包含产量数据（1=是, 0=否）", 0, "LLM判断"),
+    ("pe_aud_classification", "research_country", "TEXT", "研究国家（China/Unknown等）", 0, "LLM判断"),
+    # ── pe_aud_validation_issues 表 ──
+    ("pe_aud_validation_issues", "id", "SERIAL", "自增主键", 1, "系统生成"),
+    ("pe_aud_validation_issues", "paper_id", "TEXT", "关联论文ID", 1, "外键"),
+    ("pe_aud_validation_issues", "issue_type", "TEXT", "问题类型: issue（严重）/ warning（警告）", 1, "规则引擎"),
+    ("pe_aud_validation_issues", "severity", "TEXT", "严重级别: error / warning", 1, "规则引擎"),
+    ("pe_aud_validation_issues", "code", "TEXT", "问题编码（如 YIELD_001）", 0, "规则引擎"),
+    ("pe_aud_validation_issues", "message", "TEXT", "问题描述（含具体数值和上下文）", 1, "规则引擎"),
+    # ── pe_aud_evidence 表 ──
+    ("pe_aud_evidence", "id", "SERIAL", "自增主键", 1, "系统生成"),
+    ("pe_aud_evidence", "paper_id", "TEXT", "关联论文ID", 1, "外键"),
+    ("pe_aud_evidence", "field_name", "TEXT", "字段名（如 variety_name）", 1, "配置"),
+    ("pe_aud_evidence", "field_value", "TEXT", "字段值", 0, "LLM提取"),
+    ("pe_aud_evidence", "source_location", "TEXT", "来源位置（如'表3'）", 0, "LLM验证"),
+    ("pe_aud_evidence", "source_text", "TEXT", "原文片段", 0, "LLM验证"),
+    ("pe_aud_evidence", "confidence", "TEXT", "置信度: high/medium/low", 0, "LLM评估"),
+    ("pe_aud_evidence", "verified", "INTEGER", "是否通过验证（1=是, 0=否）", 0, "LLM验证"),
+    ("pe_aud_evidence", "reason", "TEXT", "判断原因", 0, "LLM生成"),
+    ("pe_aud_evidence", "created_at", "TEXT", "创建时间（ISO 8601）", 1, "系统生成"),
+    # ── pe_reg_paper_status 表 ──
+    ("pe_reg_paper_status", "paper_id", "TEXT", "论文唯一标识", 1, "系统生成"),
+    ("pe_reg_paper_status", "title", "TEXT", "论文标题（截取前80字符）", 0, "元数据"),
+    ("pe_reg_paper_status", "target_step", "TEXT", "本次运行的目标步骤（classify/parse/extract）", 1, "用户指定"),
+    ("pe_reg_paper_status", "status", "TEXT", "处理状态: pending/processing/completed/failed/skipped", 1, "系统记录"),
+    ("pe_reg_paper_status", "claimed_by", "TEXT", "领取该任务的实例ID", 0, "系统记录"),
+    ("pe_reg_paper_status", "duration_sec", "DOUBLE PRECISION", "处理耗时（秒）", 0, "系统记录"),
+    ("pe_reg_paper_status", "error_message", "TEXT", "错误信息（失败时）", 0, "系统记录"),
+    ("pe_reg_paper_status", "run_id", "TEXT", "本次运行ID（时间戳）", 0, "系统生成"),
+    ("pe_reg_paper_status", "updated_at", "TEXT", "最后更新时间（ISO 8601）", 0, "系统生成"),
+    ("pe_reg_paper_status", "ss_paper_id", "TEXT", "Semantic Scholar paperId（用于 PDF 下载）", 0, "搜索阶段"),
+    ("pe_reg_paper_status", "doi", "TEXT", "论文 DOI", 0, "搜索阶段"),
+    ("pe_reg_paper_status", "abstract", "TEXT", "论文摘要（用于 LLM 分类）", 0, "搜索阶段"),
+    ("pe_reg_paper_status", "publication_year", "TEXT", "发表年份", 0, "搜索阶段"),
+    ("pe_reg_paper_status", "journal", "TEXT", "期刊名称", 0, "搜索阶段"),
+    # ── pe_log_pdf_missing 表 ──
+    ("pe_log_pdf_missing", "paper_id", "TEXT", "论文唯一标识", 1, "系统生成"),
+    ("pe_log_pdf_missing", "title", "TEXT", "论文标题", 0, "元数据"),
+    ("pe_log_pdf_missing", "doi", "TEXT", "论文DOI", 0, "元数据"),
+    ("pe_log_pdf_missing", "reason", "TEXT", "下载失败原因（404/timeout/error）", 1, "系统记录"),
+    ("pe_log_pdf_missing", "attempted_at", "TEXT", "尝试下载时间（ISO 8601）", 0, "系统生成"),
 ]
 
 
@@ -492,7 +486,7 @@ def _populate_schema_doc(conn):
 
 def insert_extraction(conn, result: dict, paper_id: str):
     """
-    将一篇论文的提取结果写入数据库（papers + studies + varieties + varieties_flat）。
+    将一篇论文的提取结果写入数据库（pe_core_papers + pe_core_studies + pe_core_varieties + varieties_flat）。
 
     使用 ON CONFLICT DO UPDATE 实现幂等写入。
     线程安全：调用方需保证 conn 的线程安全（或使用锁）。
@@ -504,19 +498,19 @@ def insert_extraction(conn, result: dict, paper_id: str):
     paper = extraction.get("paper", {})
     studies = extraction.get("studies", [])
     meta = result.get("paper_meta", {})
-    cls = result.get("classification", {})  # language/category 在分类子字典中
+    cls = result.get("classification", {})  # category 在分类子字典中
     extracted_at = result.get("extracted_at") or datetime.now().isoformat()
 
     with conn.cursor() as cur:
         # ── 重跑整篇覆盖：先清空该论文的旧提取行（delete-then-insert）──
         # upsert 在"新提取行数 < 旧行数"时会残留旧行（如 management_yield 改为
         # 只提对照组后 variety 行数减少，高 variety_index 的旧处理行会留下成脏数据）。
-        # 故每次写入前按 paper_id 清空 studies/varieties/varieties_flat，再整篇插入。
-        # papers 表每个 paper_id 仅一行，直接 upsert 即可，无需删除。
-        for _table in ("varieties", "varieties_flat", "studies"):
+        # 故每次写入前按 paper_id 清空 pe_core_studies/pe_core_varieties/varieties_flat，再整篇插入。
+        # pe_core_papers 表每个 paper_id 仅一行，直接 upsert 即可，无需删除。
+        for _table in ("pe_core_varieties", "varieties_flat", "pe_core_studies"):
             cur.execute(f"DELETE FROM {_table} WHERE paper_id = %s", (paper_id,))
 
-        # ── papers 表 ──
+        # ── pe_core_papers 表 ──
         # doi/title/year/journal 从搜索元数据直填（权威来源），crop_species 等从 LLM 取
         # parse_context 从 parse 节点输出（doc_context + extraction_hints）
         # lookup_results 从 lookup 节点输出（补充后的信息）
@@ -529,15 +523,15 @@ def insert_extraction(conn, result: dict, paper_id: str):
             "evidence_nodes": result.get("evidence_nodes", []),
         }
         cur.execute("""
-            INSERT INTO papers
+            INSERT INTO pe_core_papers
             (paper_id, doi, title, publication_year, journal_name, crop_species,
-             language, category, data_file_link, data_file_description, data_file_version,
+             category, data_file_link, data_file_description, data_file_version,
              extracted_at, parse_context)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (paper_id) DO UPDATE SET
                 doi = EXCLUDED.doi, title = EXCLUDED.title,
                 publication_year = EXCLUDED.publication_year, journal_name = EXCLUDED.journal_name,
-                crop_species = EXCLUDED.crop_species, language = EXCLUDED.language,
+                crop_species = EXCLUDED.crop_species,
                 category = EXCLUDED.category, extracted_at = EXCLUDED.extracted_at,
                 parse_context = EXCLUDED.parse_context
         """, (
@@ -547,7 +541,6 @@ def insert_extraction(conn, result: dict, paper_id: str):
             int(meta["year"]) if meta.get("year", "").isdigit() else paper.get("publication_year"),
             meta.get("journal") or paper.get("journal_name"),
             paper.get("crop_species"),
-            cls.get("language"),
             cls.get("category"),
             paper.get("data_file_link"),
             paper.get("data_file_description"),
@@ -556,10 +549,10 @@ def insert_extraction(conn, result: dict, paper_id: str):
             json.dumps(parse_context_data, ensure_ascii=False),
         ))
 
-        # ── studies 表 ──
+        # ── pe_core_studies 表 ──
         for si, study in enumerate(studies):
             cur.execute("""
-                INSERT INTO studies
+                INSERT INTO pe_core_studies
                 (paper_id, study_index, study_title, study_description, trial_year,
                  sowing_date, harvest_date, country, site_administrative_region,
                  experimental_site_name, latitude, longitude, altitude, geo_source,
@@ -587,14 +580,14 @@ def insert_extraction(conn, result: dict, paper_id: str):
                 study.get("cultural_practices"), study.get("notes"),
             ))
 
-            # ── varieties + varieties_flat ──
+            # ── pe_core_varieties + varieties_flat ──
             varieties = study.get("varieties", [])
             for vi, v in enumerate(varieties):
                 is_ck = v.get("is_check_variety")
                 is_ck_int = 1 if is_ck else (0 if is_ck is not None else None)
 
                 cur.execute("""
-                    INSERT INTO varieties
+                    INSERT INTO pe_core_varieties
                     (paper_id, study_index, variety_index, variety_name, variety_code,
                      is_check_variety, variety_source, yield_raw_value, yield_raw_unit,
                      yield_standard_value, yield_standard_unit, yield_value_type,
@@ -622,7 +615,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     INSERT INTO varieties_flat
                     (paper_id, study_index, variety_index,
                      doi, paper_title, publication_year, journal_name, crop_species,
-                     language, category,
+                     category,
                      study_title, trial_year, sowing_date, harvest_date, country,
                      site_administrative_region, experimental_site_name,
                      latitude, longitude, altitude, geo_source,
@@ -634,7 +627,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                      yield_standard_unit, yield_value_type, significance_group,
                      pct_over_check, measurement_method, source_location,
                      confidence_level, extracted_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (paper_id, study_index, variety_index) DO UPDATE SET
                         variety_name = EXCLUDED.variety_name,
                         yield_standard_value = EXCLUDED.yield_standard_value,
@@ -645,7 +638,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     meta.get("title") or paper.get("paper_title"),
                     int(meta["year"]) if meta.get("year", "").isdigit() else paper.get("publication_year"),
                     meta.get("journal") or paper.get("journal_name"),
-                    paper.get("crop_species"), cls.get("language"), cls.get("category"),
+                    paper.get("crop_species"), cls.get("category"),
                     study.get("study_title"), study.get("trial_year"),
                     study.get("sowing_date"), study.get("harvest_date"),
                     study.get("country"), study.get("site_administrative_region"),
@@ -666,12 +659,12 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     v.get("confidence_level"), extracted_at,
                 ))
 
-        # ── evidence 表 ──
+        # ── pe_aud_evidence 表 ──
         evidence_nodes = result.get("evidence_nodes", [])
         for ev in evidence_nodes:
             verified_int = 1 if ev.get("verified") else 0
             cur.execute("""
-                INSERT INTO evidence
+                INSERT INTO pe_aud_evidence
                 (paper_id, field_name, field_value, source_location,
                  source_text, confidence, verified, reason, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -705,18 +698,17 @@ def insert_classification(conn, records: List[dict]):
             has_yield_int = 1 if has_yield else (0 if has_yield is not None else None)
 
             cur.execute("""
-                INSERT INTO classification
-                (paper_id, language, category, confidence, reasoning,
+                INSERT INTO pe_aud_classification
+                (paper_id, category, confidence, reasoning,
                  key_signals, crop_species, paper_type,
                  has_yield_data, research_country)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (paper_id) DO UPDATE SET
                     category = EXCLUDED.category, confidence = EXCLUDED.confidence,
                     reasoning = EXCLUDED.reasoning, key_signals = EXCLUDED.key_signals,
                     crop_species = EXCLUDED.crop_species, research_country = EXCLUDED.research_country
             """, (
                 cls.get("paper_id"),
-                cls.get("language"),
                 cls.get("category"), cls.get("confidence"), cls.get("reasoning"),
                 key_signals, cls.get("crop_species"), cls.get("paper_type"),
                 has_yield_int, cls.get("research_country"),
@@ -727,12 +719,12 @@ def insert_classification(conn, records: List[dict]):
 
 
 def insert_validation(conn, results: List[dict]):
-    """将验证报告扁平化写入 validation_issues 表。"""
+    """将验证报告扁平化写入 pe_aud_validation_issues 表。"""
     if not results:
         return
 
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM validation_issues")
+        cur.execute("DELETE FROM pe_aud_validation_issues")
 
         row_count = 0
         for record in results:
@@ -743,7 +735,7 @@ def insert_validation(conn, results: List[dict]):
                 code = issue.get("code", "") if isinstance(issue, dict) else ""
                 message = issue.get("message", issue) if isinstance(issue, dict) else issue
                 cur.execute(
-                    "INSERT INTO validation_issues (paper_id, issue_type, severity, code, message) VALUES (%s, %s, %s, %s, %s)",
+                    "INSERT INTO pe_aud_validation_issues (paper_id, issue_type, severity, code, message) VALUES (%s, %s, %s, %s, %s)",
                     (paper_id, "issue", "error", code, message))
                 row_count += 1
 
@@ -751,7 +743,7 @@ def insert_validation(conn, results: List[dict]):
                 code = warning.get("code", "") if isinstance(warning, dict) else ""
                 message = warning.get("message", warning) if isinstance(warning, dict) else warning
                 cur.execute(
-                    "INSERT INTO validation_issues (paper_id, issue_type, severity, code, message) VALUES (%s, %s, %s, %s, %s)",
+                    "INSERT INTO pe_aud_validation_issues (paper_id, issue_type, severity, code, message) VALUES (%s, %s, %s, %s, %s)",
                     (paper_id, "warning", "warning", code, message))
                 row_count += 1
 
@@ -773,7 +765,7 @@ def update_paper_status(
     from datetime import datetime
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO paper_status
+            INSERT INTO pe_reg_paper_status
             (paper_id, title, target_step, status, duration_sec, error_message, run_id, updated_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (paper_id) DO UPDATE SET
@@ -794,7 +786,7 @@ def insert_pdf_missing(conn, paper_id: str, title: str = "", doi: str = "", reas
     from datetime import datetime
     with conn.cursor() as cur:
         cur.execute("""
-            INSERT INTO pdf_missing (paper_id, title, doi, reason, attempted_at)
+            INSERT INTO pe_log_pdf_missing (paper_id, title, doi, reason, attempted_at)
             VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (paper_id) DO UPDATE SET
                 reason = EXCLUDED.reason, attempted_at = EXCLUDED.attempted_at
@@ -803,20 +795,20 @@ def insert_pdf_missing(conn, paper_id: str, title: str = "", doi: str = "", reas
 
 
 def delete_pdf_missing(conn, paper_id: str):
-    """论文已成功处理或被剔除时，从 pdf_missing 移除。
+    """论文已成功处理或被剔除时，从 pe_log_pdf_missing 移除。
 
-    pdf_missing 表只保留"当前仍卡住"的论文（确实无法获取任何全文资源）。
+    pe_log_pdf_missing 表只保留"当前仍卡住"的论文（确实无法获取任何全文资源）。
     一旦论文靠 MD 兜底成功提取（completed）或因非中国等原因被剔除（skipped），
     即视为已解决，从该表移除。DELETE 幂等，论文不在表中时为无害空操作。
     """
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM pdf_missing WHERE paper_id = %s", (paper_id,))
+        cur.execute("DELETE FROM pe_log_pdf_missing WHERE paper_id = %s", (paper_id,))
     conn.commit()
 
 
 def insert_search_results(conn, papers: List[dict]) -> int:
     """
-    将搜索结果批量写入 paper_status 表（幂等）。
+    将搜索结果批量写入 pe_reg_paper_status 表（幂等）。
 
     已存在的论文（无论状态）不会被覆盖，确保：
       - 多实例搜索同一关键词不会产生重复
@@ -841,7 +833,7 @@ def insert_search_results(conn, papers: List[dict]) -> int:
             if not pid:
                 continue
             cur.execute("""
-                INSERT INTO paper_status
+                INSERT INTO pe_reg_paper_status
                     (paper_id, title, status, updated_at,
                      ss_paper_id, doi, abstract, publication_year, journal)
                 VALUES (%s, %s, 'pending', %s, %s, %s, %s, %s, %s)
@@ -879,7 +871,7 @@ def claim_tasks(conn, instance_id: str, limit: int = 10) -> List[str]:
     with conn.cursor() as cur:
         # 先查询待处理的论文（加行锁，跳过被其他实例锁住的行）
         cur.execute("""
-            SELECT paper_id FROM paper_status
+            SELECT paper_id FROM pe_reg_paper_status
             WHERE status = 'pending'
             ORDER BY paper_id
             LIMIT %s
@@ -890,7 +882,7 @@ def claim_tasks(conn, instance_id: str, limit: int = 10) -> List[str]:
         if paper_ids:
             # 标记为 processing 并记录领取者
             cur.execute("""
-                UPDATE paper_status
+                UPDATE pe_reg_paper_status
                 SET status = 'processing', claimed_by = %s, updated_at = %s
                 WHERE paper_id = ANY(%s)
             """, (instance_id, datetime.now().isoformat(), paper_ids))
@@ -930,8 +922,8 @@ def get_table_stats(conn) -> dict:
     """获取各表的行数统计。"""
     stats = {}
     with conn.cursor() as cur:
-        for table in ("papers", "studies", "varieties", "varieties_flat",
-                       "classification", "validation_issues", "evidence", "paper_status", "pdf_missing"):
+        for table in ("pe_core_papers", "pe_core_studies", "pe_core_varieties", "varieties_flat",
+                       "pe_aud_classification", "pe_aud_validation_issues", "pe_aud_evidence", "pe_reg_paper_status", "pe_log_pdf_missing"):
             cur.execute(f"SELECT COUNT(*) FROM {table}")
             stats[table] = cur.fetchone()[0]
     return stats
@@ -957,7 +949,7 @@ def get_progress(conn) -> dict:
     with conn.cursor() as cur:
         # 按状态分组统计
         cur.execute("""
-            SELECT status, COUNT(*) FROM paper_status GROUP BY status
+            SELECT status, COUNT(*) FROM pe_reg_paper_status GROUP BY status
         """)
         for status, count in cur.fetchall():
             result["by_status"][status or "unknown"] = count
@@ -966,7 +958,7 @@ def get_progress(conn) -> dict:
         # 按实例分组统计（仅 processing/completed，了解各实例负载）
         cur.execute("""
             SELECT claimed_by, status, COUNT(*)
-            FROM paper_status
+            FROM pe_reg_paper_status
             WHERE claimed_by IS NOT NULL
             GROUP BY claimed_by, status
         """)
