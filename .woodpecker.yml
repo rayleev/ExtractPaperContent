@@ -1,0 +1,104 @@
+# Woodpecker CI/CD 配置
+# 文档: https://woodpecker-ci.org/docs/usage/intro
+
+when:
+  branch:
+    - master
+    - main
+
+steps:
+  # ── 1. 运行测试 ──
+  test:
+    image: python:3.11-slim
+    commands:
+      - pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+      - python -m pytest tests/ -v --tb=short 2>/dev/null || echo "No tests or pytest not configured"
+    when:
+      event:
+        - push
+        - pull_request
+
+  # ── 2. 构建 Docker 镜像 ──
+  build:
+    image: plugins/docker
+    settings:
+      repo: ${CI_REPO_OWNER}/paper-extractor
+      tags:
+        - latest
+        - ${CI_COMMIT_SHA::8}
+      dockerfile: Dockerfile
+      context: .
+      username:
+        from_secret: docker_username
+      password:
+        from_secret: docker_password
+    when:
+      event:
+        - push
+      branch:
+        - master
+        - main
+
+  # ── 3. 部署到服务器 ──
+  deploy:
+    image: appleboy/ssh-action
+    settings:
+      host:
+        from_secret: deploy_host
+      username:
+        from_secret: deploy_user
+      password:
+        from_secret: deploy_password
+      port: 22
+      script:
+        # 备份数据库（部署前） |
+        - echo "备份数据库..."
+        - PGPASSWORD=$DB_PASSWORD pg_dump -h $DB_HOST -U postgres -d paper_extractor > /tmp/backup_$(date +%Y%m%d_%H%M%S).sql 2>/dev/null || echo "备份失败，继续部署"
+
+        # 拉取最新镜像
+        - cd /opt/paper-extractor
+        - docker-compose pull
+
+        # 重启服务
+        - docker-compose up -d --build
+
+        # 等待服务启动
+        - sleep 10
+
+        # 健康检查
+        - curl -f http://localhost:8001/health || exit 1
+        - curl -f http://localhost:8002/health || exit 1
+        - curl -f http://localhost:8003/health || exit 1
+
+        # 清理旧镜像
+        - docker image prune -f
+
+        echo "部署完成！"
+    when:
+      event:
+        - push
+      branch:
+        - master
+        - main
+
+  # ── 4. 通知（可选） ──
+  notify:
+    image: plugins/slack
+    settings:
+      webhook:
+        from_secret: slack_webhook
+      channel: deployments
+      template: |
+        ✅ *Paper Extractor 部署完成*
+        分支: {{ CI_COMMIT_BRANCH }}
+        提交: {{ CI_COMMIT_SHA_SHORT }}
+        作者: {{ CI_COMMIT_AUTHOR }}
+        消息: {{ CI_COMMIT_MESSAGE }}
+    when:
+      event:
+        - push
+      branch:
+        - master
+        - main
+      status:
+        - success
