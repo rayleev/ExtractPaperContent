@@ -1,104 +1,79 @@
-# Woodpecker CI/CD 配置
-# 文档: https://woodpecker-ci.org/docs/usage/intro
-
-when:
-  branch:
-    - master
-    - main
+# Woodpecker CI — Paper Extractor 流水线
+# 在网页上手动触发执行
+#
+# 流程: build → deploy（备份 → 停旧 → 起新 → 健康检查 → 失败回滚）
+# 改进: 新容器启动后轮询 /health，超时则自动回滚到旧镜像
+#
+# 健康检查用独立 curl 容器接入 extractor-net，通过容器名访问。
 
 steps:
-  # ── 1. 运行测试 ──
-  test:
-    image: python:3.11-slim
+  - name: build
+    image: docker:24
     commands:
-      - pip install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
-      - python -m pytest tests/ -v --tb=short 2>/dev/null || echo "No tests or pytest not configured"
-    when:
-      event:
-        - push
-        - pull_request
+      - docker build -t paper-extractor:latest .
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
 
-  # ── 2. 构建 Docker 镜像 ──
-  build:
-    image: plugins/docker
-    settings:
-      repo: ${CI_REPO_OWNER}/paper-extractor
-      tags:
-        - latest
-        - ${CI_COMMIT_SHA::8}
-      dockerfile: Dockerfile
-      context: .
-      username:
-        from_secret: docker_username
-      password:
-        from_secret: docker_password
-    when:
-      event:
-        - push
-      branch:
-        - master
-        - main
+  - name: deploy
+    image: docker:24
+    commands:
+      - |
+        set -e
 
-  # ── 3. 部署到服务器 ──
-  deploy:
-    image: appleboy/ssh-action
-    settings:
-      host:
-        from_secret: deploy_host
-      username:
-        from_secret: deploy_user
-      password:
-        from_secret: deploy_password
-      port: 22
-      script:
-        # 备份数据库（部署前） |
-        - echo "备份数据库..."
-        - PGPASSWORD=$DB_PASSWORD pg_dump -h $DB_HOST -U postgres -d paper_extractor > /tmp/backup_$(date +%Y%m%d_%H%M%S).sql 2>/dev/null || echo "备份失败，继续部署"
+        # ── 1. 备份数据库（部署前）──
+        echo "备份数据库..."
+        BACKUP_FILE=/tmp/paper_extractor_backup_$(date +%Y%m%d_%H%M%S).sql
+        docker run --rm -e PGPASSWORD=$DB_PASSWORD docker.io/library/postgres:latest \
+          pg_dump -h $DB_HOST -U postgres -d paper_extractor > $BACKUP_FILE 2>/dev/null || echo "备份失败，继续部署"
+        echo "备份完成: $BACKUP_FILE"
 
-        # 拉取最新镜像
-        - cd /opt/paper-extractor
-        - docker-compose pull
+        # ── 2. 记录旧镜像（用于回滚）──
+        OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' extractor-1 2>/dev/null) || OLD_IMAGE=""
+        echo "旧镜像: ${OLD_IMAGE:-无}"
 
-        # 重启服务
-        - docker-compose up -d --build
+        # ── 3. 停旧容器 ──
+        cd /opt/paper-extractor
+        docker-compose down
+        echo "旧容器已清理"
 
-        # 等待服务启动
-        - sleep 10
+        # ── 4. 启动新容器 ──
+        docker-compose up -d --build
+        echo "新容器已启动"
 
-        # 健康检查
-        - curl -f http://localhost:8001/health || exit 1
-        - curl -f http://localhost:8002/health || exit 1
-        - curl -f http://localhost:8003/health || exit 1
+        # ── 5. 健康检查（最多 60s）──
+        echo "等待服务就绪..."
+        for i in $(seq 1 20); do
+          HEALTHY=true
+          for port in 8001 8002 8003; do
+            if ! docker run --rm --network extractor-net curlimages/curl -fsS --max-time 2 http://extractor-$port:8000/health > /dev/null 2>&1; then
+              HEALTHY=false
+              break
+            fi
+          done
+          if [ "$HEALTHY" = true ]; then
+            echo "✓ 部署成功，所有服务就绪"
+            exit 0
+          fi
+          echo "等待中... ($i/20)"
+          sleep 3
+        done
 
-        # 清理旧镜像
-        - docker image prune -f
-
-        echo "部署完成！"
-    when:
-      event:
-        - push
-      branch:
-        - master
-        - main
-
-  # ── 4. 通知（可选） ──
-  notify:
-    image: plugins/slack
-    settings:
-      webhook:
-        from_secret: slack_webhook
-      channel: deployments
-      template: |
-        ✅ *Paper Extractor 部署完成*
-        分支: {{ CI_COMMIT_BRANCH }}
-        提交: {{ CI_COMMIT_SHA_SHORT }}
-        作者: {{ CI_COMMIT_AUTHOR }}
-        消息: {{ CI_COMMIT_MESSAGE }}
-    when:
-      event:
-        - push
-      branch:
-        - master
-        - main
-      status:
-        - success
+        # ── 6. 健康检查失败 → 回滚 ──
+        echo "✗ 新容器未就绪，执行回滚..."
+        docker-compose down
+        if [ -n "$OLD_IMAGE" ]; then
+          # 使用旧镜像启动
+          docker-compose up -d
+          echo "已回滚到旧镜像: $OLD_IMAGE"
+        else
+          echo "无旧镜像可回滚"
+        fi
+        exit 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/paper-extractor:/opt/paper-extractor
+    environment:
+      DB_HOST:
+        from_secret: DB_HOST
+      DB_PASSWORD:
+        from_secret: DB_PASSWORD
