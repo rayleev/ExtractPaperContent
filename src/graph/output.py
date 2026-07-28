@@ -223,17 +223,6 @@ CREATE TABLE IF NOT EXISTS pdf_missing (
     attempted_at    TEXT
 );
 
--- 字段文档表（数据字典）
-CREATE TABLE IF NOT EXISTS _schema_doc (
-    table_name      TEXT NOT NULL,
-    column_name     TEXT NOT NULL,
-    column_type     TEXT,
-    description     TEXT,
-    is_required     INTEGER DEFAULT 0,
-    source          TEXT,
-    PRIMARY KEY (table_name, column_name)
-);
-
 -- 索引
 CREATE INDEX IF NOT EXISTS idx_varieties_name ON varieties(variety_name);
 CREATE INDEX IF NOT EXISTS idx_varieties_paper ON varieties(paper_id);
@@ -323,7 +312,6 @@ _TABLE_COMMENTS = {
     "evidence": "证据验证明细（字段来源追溯）",
     "paper_status": "论文处理状态（兼任务协调注册表+搜索元数据存储）",
     "pdf_missing": "无法获取 PDF 的论文记录",
-    "_schema_doc": "字段文档表（数据字典），自动维护",
 }
 
 
@@ -343,6 +331,7 @@ _SCHEMA_DOCS = [
     ("papers", "data_file_description", "TEXT", "数据文件格式说明", 0, "LLM提取"),
     ("papers", "data_file_version", "TEXT", "数据集版本号", 0, "LLM提取"),
     ("papers", "extracted_at", "TEXT", "提取时间（ISO 8601）", 0, "系统生成"),
+    ("papers", "parse_context", "JSONB", "parse 节点输出（作物列表、品种共用关系等）", 0, "LLM提取"),
     # ── studies 表 ──
     ("studies", "paper_id", "TEXT", "关联论文ID", 1, "外键"),
     ("studies", "study_index", "INTEGER", "试验在论文中的序号（0起始）", 1, "系统生成"),
@@ -479,31 +468,12 @@ _SCHEMA_DOCS = [
     ("pdf_missing", "doi", "TEXT", "论文DOI", 0, "元数据"),
     ("pdf_missing", "reason", "TEXT", "下载失败原因（404/timeout/error）", 1, "系统记录"),
     ("pdf_missing", "attempted_at", "TEXT", "尝试下载时间（ISO 8601）", 0, "系统生成"),
-    # ── _schema_doc 字段文档表 ──
-    ("_schema_doc", "table_name", "TEXT", "所属表名", 1, "系统维护"),
-    ("_schema_doc", "column_name", "TEXT", "字段名", 1, "系统维护"),
-    ("_schema_doc", "column_type", "TEXT", "字段类型（PG语法）", 0, "系统维护"),
-    ("_schema_doc", "description", "TEXT", "字段中文说明", 0, "系统维护"),
-    ("_schema_doc", "is_required", "INTEGER", "是否必填（1=是, 0=否）", 0, "系统维护"),
-    ("_schema_doc", "source", "TEXT", "数据来源（搜索元数据/LLM提取/程序计算/系统生成等）", 0, "系统维护"),
 ]
 
 
 def _populate_schema_doc(conn):
-    """填充字段文档表 + 为所有表和字段添加 PG 原生 COMMENT（幂等操作）。"""
+    """为所有表和字段添加 PG 原生 COMMENT（幂等操作）。"""
     with conn.cursor() as cur:
-        # ── 字段文档表 ──
-        for table, col, col_type, desc, required, source in _SCHEMA_DOCS:
-            cur.execute("""
-                INSERT INTO _schema_doc (table_name, column_name, column_type, description, is_required, source)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (table_name, column_name) DO UPDATE SET
-                    column_type = EXCLUDED.column_type,
-                    description = EXCLUDED.description,
-                    is_required = EXCLUDED.is_required,
-                    source = EXCLUDED.source
-            """, (table, col, col_type, desc, required, source))
-
         # ── 表级注释 ──
         for table, comment in _TABLE_COMMENTS.items():
             cur.execute(f"COMMENT ON TABLE {table} IS %s", (comment,))
