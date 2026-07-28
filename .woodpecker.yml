@@ -20,27 +20,41 @@ steps:
       - |
         set -e
 
-        # ── 1. 备份数据库（部署前）──
+        # ── 1. 写入配置 ──
+        DEPLOY_DIR=/opt/paper-extractor
+        cd "$DEPLOY_DIR"
+
+        # 写入 config.yaml
+        rm -rf config.yaml
+        echo "$CONFIG_YAML" > config.yaml
+        echo "config.yaml 已写入"
+
+        # 写入 .env
+        rm -rf .env
+        echo "$ENV_FILE" > .env
+        echo ".env 已写入"
+
+        # ── 2. 备份数据库（部署前）──
         echo "备份数据库..."
         BACKUP_FILE=/tmp/paper_extractor_backup_$(date +%Y%m%d_%H%M%S).sql
+        source .env
         docker run --rm -e PGPASSWORD=$DB_PASSWORD docker.io/library/postgres:latest \
           pg_dump -h $DB_HOST -U postgres -d paper_extractor > $BACKUP_FILE 2>/dev/null || echo "备份失败，继续部署"
         echo "备份完成: $BACKUP_FILE"
 
-        # ── 2. 记录旧镜像（用于回滚）──
+        # ── 3. 记录旧镜像（用于回滚）──
         OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' extractor-1 2>/dev/null) || OLD_IMAGE=""
         echo "旧镜像: ${OLD_IMAGE:-无}"
 
-        # ── 3. 停旧容器 ──
-        cd /opt/paper-extractor
+        # ── 4. 停旧容器 ──
         docker-compose down
         echo "旧容器已清理"
 
-        # ── 4. 启动新容器 ──
+        # ── 5. 启动新容器 ──
         docker-compose up -d --build
         echo "新容器已启动"
 
-        # ── 5. 健康检查（最多 60s）──
+        # ── 6. 健康检查（最多 60s）──
         echo "等待服务就绪..."
         for i in $(seq 1 20); do
           HEALTHY=true
@@ -58,11 +72,10 @@ steps:
           sleep 3
         done
 
-        # ── 6. 健康检查失败 → 回滚 ──
+        # ── 7. 健康检查失败 → 回滚 ──
         echo "✗ 新容器未就绪，执行回滚..."
         docker-compose down
         if [ -n "$OLD_IMAGE" ]; then
-          # 使用旧镜像启动
           docker-compose up -d
           echo "已回滚到旧镜像: $OLD_IMAGE"
         else
@@ -73,7 +86,7 @@ steps:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/paper-extractor:/opt/paper-extractor
     environment:
-      DB_HOST:
-        from_secret: DB_HOST
-      DB_PASSWORD:
-        from_secret: DB_PASSWORD
+      CONFIG_YAML:
+        from_secret: CONFIG_YAML
+      ENV_FILE:
+        from_secret: ENV_FILE
