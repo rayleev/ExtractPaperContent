@@ -22,12 +22,12 @@ steps:
 
         # ── 1. 写入配置 ──
         DEPLOY_DIR=/opt/paper-extractor
-        echo "部署目录: $DEPLOY_DIR"
-        ls -la "$DEPLOY_DIR" || echo "目录不存在"
-
         cd "$DEPLOY_DIR"
-        echo "当前目录: $(pwd)"
-        ls -la
+
+        # 写入 docker-compose.yml
+        rm -rf docker-compose.yml
+        echo "$DOCKER_COMPOSE_YAML" > docker-compose.yml
+        echo "docker-compose.yml 已写入"
 
         # 写入 config.yaml
         rm -rf config.yaml
@@ -94,6 +94,8 @@ steps:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/paper-extractor:/opt/paper-extractor
     environment:
+      DOCKER_COMPOSE_YAML:
+        from_secret: DOCKER_COMPOSE_YAML
       CONFIG_YAML:
         from_secret: CONFIG_YAML
       ENV_FILE:
