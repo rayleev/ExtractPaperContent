@@ -22,7 +22,12 @@ steps:
 
         # ── 1. 写入配置 ──
         DEPLOY_DIR=/opt/paper-extractor
+        echo "部署目录: $DEPLOY_DIR"
+        ls -la "$DEPLOY_DIR" || echo "目录不存在"
+
         cd "$DEPLOY_DIR"
+        echo "当前目录: $(pwd)"
+        ls -la
 
         # 写入 config.yaml
         rm -rf config.yaml
