@@ -33,18 +33,7 @@ steps:
         echo "$ENV_FILE" > .env
         echo ".env 已写入"
 
-        # ── 2. 备份数据库（部署前）──
-        echo "备份数据库..."
-        BACKUP_FILE=/tmp/paper_extractor_backup_$(date +%Y%m%d_%H%M%S).sql
-        DB_HOST=$(grep DB_HOST .env | cut -d= -f2 | tr -d '\r')
-        DB_PASSWORD=$(grep DB_PASSWORD .env | cut -d= -f2 | tr -d '\r')
-        echo "DB_HOST=$DB_HOST"
-        echo "开始备份（最多等待 30s）..."
-        timeout 30 docker run --rm -e PGPASSWORD="$DB_PASSWORD" docker.io/library/postgres:latest \
-          pg_dump -h "$DB_HOST" -U postgres -d paper_extractor > $BACKUP_FILE 2>/dev/null || echo "备份失败或超时，继续部署"
-        echo "备份完成: $BACKUP_FILE"
-
-        # ── 3. 记录旧镜像（用于回滚）──
+        # ── 2. 记录旧镜像（用于回滚）──
         OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' extractor-1 2>/dev/null) || OLD_IMAGE=""
         echo "旧镜像: ${OLD_IMAGE:-无}"
 
