@@ -124,7 +124,7 @@ def create_app() -> FastAPI:
             stats = get_table_stats(conn)
             conn.close()
             db_ok = True
-            db_info = f"{stats.get('papers', 0)} papers, {stats.get('varieties', 0)} varieties"
+            db_info = f"{stats.get('pe_core_papers', 0)} papers, {stats.get('pe_core_varieties', 0)} varieties"
         except Exception as e:
             db_info = str(e)[:200]
 
