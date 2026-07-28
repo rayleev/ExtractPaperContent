@@ -59,7 +59,8 @@ steps:
         for i in $(seq 1 20); do
           HEALTHY=true
           for port in 8001 8002 8003; do
-            if ! docker run --rm --network extractor-net curlimages/curl -fsS --max-time 2 http://extractor-$port:8000/health > /dev/null 2>&1; then
+            # 使用 host 网络模式访问宿主机端口
+            if ! docker run --rm --network host curlimages/curl -fsS --max-time 2 http://localhost:$port/health > /dev/null 2>&1; then
               HEALTHY=false
               break
             fi
