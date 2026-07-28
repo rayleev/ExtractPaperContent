@@ -1,10 +1,10 @@
 # Woodpecker CI — Paper Extractor 流水线
 # 在网页上手动触发执行
 #
-# 流程: build → deploy（备份 → 停旧 → 起新 → 健康检查 → 失败回滚）
-# 改进: 新容器启动后轮询 /health，超时则自动回滚到旧镜像
+# 流程: build → deploy（构建镜像 → 启动服务 → 健康检查 → 失败回滚）
 #
-# 健康检查用独立 curl 容器接入 extractor-net，通过容器名访问。
+# Woodpecker 会克隆仓库到工作目录，docker-compose.yml 已在仓库中。
+# 配置文件和环境变量通过 secrets 注入。
 
 steps:
   - name: build
@@ -20,29 +20,22 @@ steps:
       - |
         set -e
 
-        # ── 1. 写入配置 ──
-        DEPLOY_DIR=/opt/paper-extractor
-        cd "$DEPLOY_DIR"
-
-        # 写入 docker-compose.yml
-        rm -rf docker-compose.yml
-        echo "$DOCKER_COMPOSE_YAML" > docker-compose.yml
-        echo "docker-compose.yml 已写入"
+        # ── 1. 写入配置（从 secrets 注入）──
+        # Woodpecker 已克隆仓库，当前目录包含 docker-compose.yml
+        echo "当前目录: $(pwd)"
+        ls -la
 
         # 写入 config.yaml
-        rm -rf config.yaml
         echo "$CONFIG_YAML" > config.yaml
         echo "config.yaml 已写入"
 
         # 写入 .env
-        rm -rf .env
         echo "$ENV_FILE" > .env
         echo ".env 已写入"
 
         # ── 2. 备份数据库（部署前）──
         echo "备份数据库..."
         BACKUP_FILE=/tmp/paper_extractor_backup_$(date +%Y%m%d_%H%M%S).sql
-        # 从 .env 文件中提取 DB_HOST 和 DB_PASSWORD
         DB_HOST=$(grep DB_HOST .env | cut -d= -f2)
         DB_PASSWORD=$(grep DB_PASSWORD .env | cut -d= -f2)
         docker run --rm -e PGPASSWORD="$DB_PASSWORD" docker.io/library/postgres:latest \
@@ -53,21 +46,16 @@ steps:
         OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' extractor-1 2>/dev/null) || OLD_IMAGE=""
         echo "旧镜像: ${OLD_IMAGE:-无}"
 
-        # ── 4. 停旧容器 ──
-        docker-compose down
-        echo "旧容器已清理"
-
-        # ── 5. 启动新容器 ──
+        # ── 4. 启动服务 ──
         docker-compose up -d --build
-        echo "新容器已启动"
+        echo "服务已启动"
 
-        # ── 6. 健康检查（最多 60s）──
+        # ── 5. 健康检查（最多 60s）──
         echo "等待服务就绪..."
         for i in $(seq 1 20); do
           HEALTHY=true
           for port in 8001 8002 8003; do
-            # 使用 host 网络模式访问宿主机端口
-            if ! docker run --rm --network host curlimages/curl -fsS --max-time 2 http://localhost:$port/health > /dev/null 2>&1; then
+            if ! docker run --rm --network extractor-net curlimages/curl -fsS --max-time 2 http://extractor-$port:8000/health > /dev/null 2>&1; then
               HEALTHY=false
               break
             fi
@@ -80,7 +68,7 @@ steps:
           sleep 3
         done
 
-        # ── 7. 健康检查失败 → 回滚 ──
+        # ── 6. 健康检查失败 → 回滚 ──
         echo "✗ 新容器未就绪，执行回滚..."
         docker-compose down
         if [ -n "$OLD_IMAGE" ]; then
@@ -92,10 +80,7 @@ steps:
         exit 1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /opt/paper-extractor:/opt/paper-extractor
     environment:
-      DOCKER_COMPOSE_YAML:
-        from_secret: DOCKER_COMPOSE_YAML
       CONFIG_YAML:
         from_secret: CONFIG_YAML
       ENV_FILE:
