@@ -41,7 +41,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: paper-extractor:latest
+    image: ${IMAGE_TAG:-paper-extractor:latest}
     container_name: extractor-1
     restart: unless-stopped
     ports:
@@ -69,7 +69,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: paper-extractor:latest
+    image: ${IMAGE_TAG:-paper-extractor:latest}
     container_name: extractor-2
     restart: unless-stopped
     ports:
@@ -97,7 +97,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: paper-extractor:latest
+    image: ${IMAGE_TAG:-paper-extractor:latest}
     container_name: extractor-3
     restart: unless-stopped
     ports:

@@ -37,6 +37,10 @@ steps:
         OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' extractor-1 2>/dev/null) || OLD_IMAGE=""
         echo "旧镜像: ${OLD_IMAGE:-无}"
 
+        # ── 3. 停止旧容器 ──
+        docker-compose down
+        echo "旧容器已停止"
+
         # ── 4. 启动服务 ──
         docker-compose up -d --build
         echo "服务已启动"
@@ -63,7 +67,7 @@ steps:
         echo "✗ 新容器未就绪，执行回滚..."
         docker-compose down
         if [ -n "$OLD_IMAGE" ]; then
-          docker-compose up -d
+          IMAGE_TAG="$OLD_IMAGE" docker-compose up -d --no-build
           echo "已回滚到旧镜像: $OLD_IMAGE"
         else
           echo "无旧镜像可回滚"

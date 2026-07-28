@@ -43,3 +43,8 @@ Thumbs.db
 # 环境变量文件
 .env
 .config
+
+#数据文件
+*.csv
+*.json
+*.sql
