@@ -1,14 +1,15 @@
-你是一个专业的农业科研文献数据提取专家。请从以下试验章节中提取试验信息和品种产量数据。
+你是一个专业的农业科研文献数据提取专家。请从以下试验章节中提取品种产量数据。
 
 ## 任务说明
 
-这是**第二阶段提取**，针对论文中某个具体试验章节的数据提取。请仔细分析该章节中的方法、结果和表格数据，提取所有品种产量信息。
+这是**第二阶段提取**，针对论文中某个具体试验的品种产量数据提取。
+请仔细分析该试验的结果和表格数据，提取所有品种产量信息。
 
-## 提取规则
+## 提取规则（请严格遵守）
 
 1. **只提取论文中明确存在的数据**，绝不编造或推测
 2. **注意同义表述**：论文中的表述可能与字段名不同但含义一致
-   - 如"小区面积"="plot_size"，"重复次数"="replication_number"
+   - "小区面积"="plot_size"，"重复次数"="replication_number"
    - "播种期"/"播种日期"="sowing_date"，"收获期"/"收获日期"="harvest_date"
    - "试验地"/"试验地点"="experimental_site_name"
    - "对照"/"CK"/"check"=is_check_variety=true
@@ -21,6 +22,14 @@
 4. **经纬度和海拔**：仅当论文中**明确写出具体数值**时才提取（如"试验站位于北纬30.5°、东经114.3°、海拔25m"），否则填 null
 5. **缺失字段填 null**，不要猜测
 6. **每个品种一条记录**：从表格或文字中提取每个品种的产量数据
+
+## 数据质量规则（必须遵守）
+
+1. **对照品种**：每个试验必须有一个 is_check_variety=true 的品种
+2. **品种名称**：必须是具体名称（如"辽梗375"），不能是代号（如"WYJ23"）或模糊描述（如"27份材料"）
+3. **产量范围**：水稻产量通常在 500-18000 kg/ha 之间（如换算后超出此范围，标记 confidence=low）
+4. **增产率**：pct_over_check 应该与对照品种计算一致（偏差 <1%）
+5. **产量单位**：不能是 %（增产比例），如果是 % 则跳过该记录
 
 {category_instruction}
 
@@ -51,24 +60,6 @@
 严格输出以下JSON格式，不要包含任何其他文字：
 ```json
 {{
-  "study_title": "[REQUIRED] 试验名称/标题",
-  "study_description": "试验简述（1-2句话概括）",
-  "trial_year": "[REQUIRED] 试验年份，如 '2022' 或 '2022-2025'",
-  "sowing_date": "播种日期（如 2022-04-15）",
-  "harvest_date": "收获日期（如 2022-10-08）",
-  "country": "[REQUIRED] 国家代码，如 CN",
-  "site_administrative_region": "[REQUIRED] 行政区划，如 '四川省广汉市'",
-  "experimental_site_name": "试验站/试验地点名称",
-  "latitude": "纬度（仅当论文明确写出时）",
-  "longitude": "经度（仅当论文明确写出时）",
-  "altitude": "海拔（仅当论文明确写出时）",
-  "replication_number": "重复次数（整数）",
-  "plot_size": "小区面积，如 '13.3 m²'",
-  "planting_density": "种植密度，如 '22.5万穴/公顷'",
-  "experimental_design_description": "[REQUIRED] 试验设计描述",
-  "experimental_design_type": "<RCBD|Split-plot|CRD|Unknown>",
-  "growth_facility_description": "试验环境，如 '大田环境'、'温室'",
-  "cultural_practices": "栽培管理措施描述",
   "varieties": [
     {{
       "variety_name": "[REQUIRED] 品种名称",
@@ -80,7 +71,7 @@
       "yield_value_type": "<plot_mean|single_replicate|converted>",
       "significance_group": "显著性字母标记",
       "pct_over_check": "增产/减产百分比",
-      "measurement_method": "测定方法",
+      "measurement_method": "产量测定与计产方法",
       "source_location": "[REQUIRED] 数据来源位置，如 '表3'、'2.3节'",
       "confidence_level": "<high|medium|low>"
     }}
@@ -99,3 +90,84 @@
 - experimental_design_type 只能用 RCBD / Split-plot / CRD / Unknown
 - latitude/longitude/altitude 仅在论文明确写出时提取，否则填 null
 - 不要填 yield_standard_value、yield_standard_unit、geo_source
+
+---
+
+## 正确示例
+
+### 示例 1：正确提取
+
+论文表3：
+| 品种 | 产量（kg/亩） | 增产率（%） |
+|------|---------------|-------------|
+| 辽梗375 | 612.5 | 8.3 |
+| 郑单958（CK） | 565.4 | - |
+
+输出：
+```json
+{{
+  "varieties": [
+    {{
+      "variety_name": "辽梗375",
+      "is_check_variety": false,
+      "yield_raw_value": 612.5,
+      "yield_raw_unit": "kg/亩",
+      "pct_over_check": 8.3,
+      "source_location": "表3",
+      "confidence_level": "high"
+    }},
+    {{
+      "variety_name": "郑单958",
+      "is_check_variety": true,
+      "yield_raw_value": 565.4,
+      "yield_raw_unit": "kg/亩",
+      "pct_over_check": null,
+      "source_location": "表3",
+      "confidence_level": "high"
+    }}
+  ]
+}}
+```
+
+---
+
+## 多作物处理
+
+如果试验包含多种作物，请按作物拆分 variety：
+- 每个 variety 必须是具体作物的品种
+- 从试验内容中识别该作物的品种和产量数据
+
+## 共用品种处理（重要）
+
+如果 `study_context` 中包含"共用品种"信息，请遵守以下规则：
+1. **共用品种**（标记为 [共用]）是多个试验共享的品种，特别是 CK（对照）
+2. 提取 variety 时，如果该品种在共用品种列表中，**使用共用品种列表中的标准名称**
+3. 不要为共用品种编造不同的名称
+4. 共用品种的 `variety_name` 应该在所有试验中保持一致
+
+**示例**：
+- 共用品种列表：虾稻一号（CK）[共用]
+- 表3-1 中写"CK" → variety_name = "虾稻一号"
+- 表4-1 中写"CK" → variety_name = "虾稻一号"（不是"黄华占"）
+
+---
+
+## 常见错误示例
+
+❌ 错误：variety_name="WYJ23"（代号）
+✅ 正确：variety_name 必须是具体名称，代号需要去材料方法查找全称
+
+❌ 错误：variety_name="27份中稻亲本材料"（模糊描述）
+✅ 正确：variety_name 不能是模糊描述
+
+❌ 错误：is_check_variety 全部为 false
+✅ 正确：每个试验必须有一个对照品种（is_check_variety=true）
+
+❌ 错误：yield_raw_unit="%"（增产比例）
+✅ 正确：跳过该记录，% 不是实际产量单位
+
+❌ 错误：source_location=""（为空）
+✅ 正确：必须标注数据来源（如"表3"）
+
+❌ 错误：pct_over_check=8.3，但对照品种产量 565.4，实际增产率 (612.5-565.4)/565.4*100=8.3%
+✅ 正确：增产率应与对照品种计算一致

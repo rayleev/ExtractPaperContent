@@ -33,7 +33,7 @@ def validate_node(state: PaperState, config: AppConfig) -> dict:
     extraction = state.get("extraction", {})
     paper_meta = state.get("paper_meta", {})
 
-    report = validate_extraction(extraction, paper_meta)
+    report = validate_extraction(extraction, paper_meta, config)
 
     stats = report["stats"]
     logger.info(
@@ -60,7 +60,8 @@ def targeted_llm_validate_node(
     """
     针对性 LLM 验证节点：仅对规则标记为可疑的品种记录做 LLM 核对。
 
-    只发送可疑记录的数据（不含论文全文），prompt 精简，token 消耗低。
+    发送可疑记录的字段 + 论文原文证据（来自 evidence_nodes），
+    prompt 精简，token 消耗低。
     """
     flagged = state.get("flagged_records", [])
     if not flagged:
@@ -68,6 +69,7 @@ def targeted_llm_validate_node(
 
     extraction = state.get("extraction", {})
     studies = extraction.get("studies", [])
+    evidence_nodes = state.get("evidence_nodes", [])
     pid = state["paper_id"]
 
     verified_count = 0
@@ -82,16 +84,42 @@ def targeted_llm_validate_node(
         v = varieties[vi]
         vname = v.get("variety_name", "?")
 
-        # 构建精简验证 prompt（只发送可疑记录的字段）
+        # 从 study_title 推断作物
+        study_title = study.get("study_title", "") or ""
+        crop = ""
+        for crop_name in ["水稻", "玉米", "小麦", "大豆", "油菜"]:
+            if crop_name in study_title:
+                crop = crop_name
+                break
+
+        # 查找该品种的原文证据
+        evidence_text = ""
+        for ev in evidence_nodes:
+            if ev.get("field") == "variety_name" and ev.get("value") == vname:
+                evidence_text = (
+                    f"位置: {ev.get('source_location', 'unknown')}\n"
+                    f"原文: {ev.get('source_text', '')}"
+                )
+                break
+
+        # 构建验证 prompt（包含原文证据和作物信息）
         prompt = (
-            f"请核对以下从论文表格中提取的品种产量数据是否正确：\n\n"
+            f"请核对以下"
+            f"{' ' + crop if crop else ''}"
+            f"品种产量数据是否正确：\n\n"
             f"品种名称: {vname}\n"
             f"产量: {v.get('yield_raw_value')} {v.get('yield_raw_unit')}\n"
             f"对照品种: {v.get('is_check_variety')}\n"
             f"增产率: {v.get('pct_over_check')}%\n"
             f"数据来源: {v.get('source_location')}\n\n"
-            f"如果数据看起来合理，输出 {{\"verified\": true}}\n"
-            f"如果有明显错误，输出 {{\"verified\": false, \"reason\": \"错误描述\"}}"
+        )
+
+        if evidence_text:
+            prompt += f"论文原文证据:\n{evidence_text}\n\n"
+
+        prompt += (
+            f"如果数据与原文一致，输出 {{\"verified\": true}}\n"
+            f"如果有明显错误，输出 {{\"verified\": false, \"reason\": \"错误描述\", \"correct_value\": \"正确值\"}}"
         )
 
         result = llm.call_json(prompt, max_tokens=200)
@@ -99,7 +127,11 @@ def targeted_llm_validate_node(
             verified_count += 1
         elif result and not result.get("verified"):
             reason = result.get("reason", "")
+            correct_value = result.get("correct_value", "")
             logger.info(f"  [{pid[:25]}] LLM flagged {vname}: {reason}")
+            # 如果有正确值，可以回填
+            if correct_value:
+                v["variety_name"] = correct_value
 
     logger.info(f"  [{pid[:25]}] Targeted validation: {verified_count}/{len(flagged)} verified")
 

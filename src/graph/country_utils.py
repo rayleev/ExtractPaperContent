@@ -12,31 +12,9 @@ from __future__ import annotations
 import logging
 from typing import List, Tuple
 
+from src.core.constants import CHINA_ALIASES, UNCERTAIN_VALUES, CHINA_PROVINCE_KEYWORDS
+
 logger = logging.getLogger("paper_extractor")
-
-# 中国别名（含台湾），统一转小写后比较
-CHINA_ALIASES = {
-    "china", "cn", "chn", "中国", "中华人民共和国", "people's republic of china",
-    "prc", "mainland china", "中国大陆", "中国大陸",
-    "taiwan", "tw", "twn", "台湾", "臺灣", "中国台湾", "台湾省",
-}
-
-# 明确"不确定"的取值（提取前需放行、提取后复核）
-# 注：'其他国家名'/'其他国家' 是 classify prompt 的占位符，LLM 有时会原样回填，
-#     表示元数据层面无法确定具体国家，按"不确定"处理（放行→提取后按全文复核）。
-UNCERTAIN_VALUES = {
-    "", "unknown", "未知", "n/a", "na", "none", "null", "unspecified", "不确定",
-    "其他国家名", "其他国家",
-}
-
-# 中国省级行政区关键词（用于 site_administrative_region 兜底判断）
-_CHINA_PROVINCE_KEYWORDS = [
-    "北京", "天津", "上海", "重庆",
-    "河北", "山西", "辽宁", "吉林", "黑龙江", "江苏", "浙江", "安徽",
-    "福建", "江西", "山东", "河南", "湖北", "湖南", "广东", "海南",
-    "四川", "贵州", "云南", "陕西", "甘肃", "青海", "内蒙古", "广西",
-    "西藏", "宁夏", "新疆", "台湾",
-]
 
 
 def normalize_country(raw) -> str:
@@ -70,13 +48,20 @@ def is_uncertain(raw) -> bool:
 
 
 def _region_looks_china(region: str) -> bool:
-    """行政区划/地点字符串是否呈现中国特征（含省份关键词或中文字符）。"""
+    """行政区划/地点字符串是否呈现中国特征。
+
+    判断逻辑：
+      1. 含中国地名关键词（省级/市级中文或拼音）
+      2. 含中文字符（中文论文中的地名）
+    """
     if not region:
         return False
-    if any(kw in region for kw in _CHINA_PROVINCE_KEYWORDS):
+    region_lower = region.lower()
+    # 1. 关键词匹配（中文或拼音）
+    if any(kw in region_lower for kw in CHINA_PROVINCE_KEYWORDS):
         return True
-    # 含中文字符（中国试验的行政区划通常为中文，如 "四川省广汉市"）
-    return any("\u4e00" <= ch <= "\u9fff" for ch in region)
+    # 2. 含中文字符（中文论文中的地名，如 "信阳市"）
+    return any("一" <= ch <= "鿿" for ch in region)
 
 
 def infer_paper_country(studies: List[dict]) -> Tuple[bool, str]:

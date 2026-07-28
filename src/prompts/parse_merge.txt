@@ -1,0 +1,65 @@
+你是一个农业科研文献理解专家。请将多个分段理解结果合并为全局理解。
+
+## 标题大纲
+{tree_outline}
+
+## 分段理解结果
+{partial_results}
+
+---
+
+## 合并要求
+
+请合并多个分段理解结果，输出全局一致的 JSON：
+
+### 1. doc_context（文档上下文）
+- 合并所有分段的 crops 列表（去重）
+- 合并所有分段的 chunk 列表
+- 去重 table_refs
+- 取多数一致的 study_count
+- 如果任一分段有 data_file_link，保留该链接
+- 合并所有分段的 variety_groups（去重，按品种名称合并）
+
+### 2. extraction_hints（提取提示）
+- 合并所有分段的提示
+- 去重（相同 field + value + crop 只保留一个）
+- 如果不同分段对同一字段有不同理解，取最详细的版本
+- 保留 crop 字段（标识该 hint 属于哪个作物）
+
+---
+
+## 注意事项
+
+1. 实体去重时，保留信息最完整的版本
+2. 如果不同分段对同一实体有不同理解，取置信度最高的
+3. 合并后保持 JSON 结构一致
+4. context 字段保留原文片段，不要修改
+5. 每个 hint 必须保留 crop 字段
+
+---
+
+请输出 JSON：
+
+```json
+{{
+  "doc_context": {{
+    "crops": ["水稻 / Rice", "玉米 / Maize"],
+    "study_count": 0,
+    "chunks": [...],
+    "has_supplementary": false,
+    "table_refs": [],
+    "data_file_link": null,
+    "data_file_description": null
+  }},
+  "extraction_hints": [
+    {{
+      "crop": "水稻 / Rice",
+      "field": "variety_name",
+      "value": "WYJ23",
+      "context": "供试品种为 WYJ23、辽梗375、郑单978...",
+      "action": "needs_lookup",
+      "reason": "代号，需查材料方法确认全称"
+    }}
+  ]
+}}
+```

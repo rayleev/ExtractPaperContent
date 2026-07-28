@@ -12,9 +12,16 @@ from src.core.models import _convert_yield
 
 logger = logging.getLogger("paper_extractor")
 
-# 水稻产量合理范围 (kg/ha)
-YIELD_MIN = 500
-YIELD_MAX = 18000
+# 不同作物的产量合理范围 (kg/ha)
+YIELD_RANGES = {
+    "水稻": (500, 18000),
+    "玉米": (1000, 20000),
+    "小麦": (800, 15000),
+    "大豆": (300, 6000),
+    "油菜": (200, 5000),
+}
+YIELD_MIN_DEFAULT = 500
+YIELD_MAX_DEFAULT = 18000
 
 # 中国经纬度范围
 LAT_MIN, LAT_MAX = 18.0, 54.0
@@ -31,26 +38,26 @@ def _to_float(value):
         return None
 
 
-def validate_extraction(extraction: dict, paper_meta: dict) -> dict:
+def validate_extraction(extraction: dict, paper_meta: dict, config=None) -> dict:
     """
     对提取结果运行规则验证。
 
     返回:
         {
-            "issues": [str],        # 严重问题（数据可能错误）
-            "warnings": [str],      # 警告（数据可能有问题）
+            "issues": [{"code": str, "message": str}],        # 严重问题
+            "warnings": [{"code": str, "message": str}],      # 警告
             "stats": {
                 "total_studies": int,
                 "total_varieties": int,
                 "issues_count": int,
                 "warnings_count": int,
-                "flagged_records": int,  # 需要 LLM 验证的记录数
+                "flagged_records": int,
             },
             "flagged_variety_indices": [(study_idx, variety_idx), ...],
         }
     """
-    issues: list[str] = []
-    warnings: list[str] = []
+    issues: list[dict] = []
+    warnings: list[dict] = []
     flagged: list[tuple[int, int]] = []
 
     studies = extraction.get("studies", [])
@@ -68,7 +75,7 @@ def validate_extraction(extraction: dict, paper_meta: dict) -> dict:
         # 对照品种存在性
         ck_varieties = [v for v in varieties if v.get("is_check_variety")]
         if not ck_varieties and varieties:
-            warnings.append(f"{prefix}: 缺少对照品种")
+            warnings.append({"code": "CK_001", "message": f"{prefix}: 缺少对照品种"})
 
         # trial_year ≤ publication_year
         trial_year = study.get("trial_year", "")
@@ -76,7 +83,7 @@ def validate_extraction(extraction: dict, paper_meta: dict) -> dict:
             try:
                 ty = int(str(trial_year)[:4])
                 if ty > int(pub_year):
-                    issues.append(f"{prefix}: trial_year({trial_year}) > publication_year({pub_year})")
+                    issues.append({"code": "YEAR_001", "message": f"{prefix}: trial_year({trial_year}) > publication_year({pub_year})"})
             except ValueError:
                 pass
 
@@ -87,14 +94,14 @@ def validate_extraction(extraction: dict, paper_meta: dict) -> dict:
         lon = _to_float(raw_lon)
         if lat is not None and lon is not None:
             if not (LAT_MIN <= lat <= LAT_MAX and LON_MIN <= lon <= LON_MAX):
-                warnings.append(f"{prefix}: 经纬度({lat}, {lon})超出中国范围")
+                warnings.append({"code": "GEO_001", "message": f"{prefix}: 经纬度({lat}, {lon})超出中国范围"})
         elif (raw_lat is not None and lat is None) or (raw_lon is not None and lon is None):
-            warnings.append(f"{prefix}: 经纬度非数值（lat={raw_lat}, lon={raw_lon}），已忽略范围检查")
+            warnings.append({"code": "GEO_002", "message": f"{prefix}: 经纬度非数值（lat={raw_lat}, lon={raw_lon}），已忽略范围检查"})
 
         # 多站点检测
         site_name = study.get("experimental_site_name", "") or ""
         if "、" in site_name or ("和" in site_name and len(site_name) > 10):
-            warnings.append(f"{prefix}: experimental_site_name 包含多个地点")
+            warnings.append({"code": "MULTI_SITE_001", "message": f"{prefix}: experimental_site_name 包含多个地点"})
 
         # ── Variety 级检查 ──
         for vi, v in enumerate(varieties):
@@ -107,22 +114,30 @@ def validate_extraction(extraction: dict, paper_meta: dict) -> dict:
             std_val = v.get("yield_standard_value")
 
             if raw_val is not None and raw_unit:
-                expected = _convert_yield(raw_val, raw_unit)
+                expected = _convert_yield(
+                    raw_val, raw_unit,
+                    mass_to_kg=config.unit_conversion.mass_to_kg if config else {},
+                    area_to_ha=config.unit_conversion.area_to_ha if config else {},
+                    context_plot={"plot", "小区"},
+                    context_plant={"plant", "株", "pot", "盆", "ear", "穗", "hill", "穴", "棵"},
+                )
                 if expected is not None and std_val is not None:
                     if abs(expected - std_val) > max(1.0, expected * 0.01):
-                        issues.append(
-                            f"{vprefix}: 产量换算不一致 "
-                            f"(raw={raw_val} {raw_unit}, expected={expected}, got={std_val})"
-                        )
+                        issues.append({"code": "YIELD_001", "message": f"{vprefix}: 产量换算不一致 (raw={raw_val} {raw_unit}, expected={expected}, got={std_val})"})
                         flagged.append((si, vi))
 
-            # 2. 产量范围检查
+            # 2. 产量范围检查（按作物使用不同范围）
             if std_val is not None:
-                if std_val < YIELD_MIN or std_val > YIELD_MAX:
-                    warnings.append(
-                        f"{vprefix}: 产量异常 ({std_val} kg/ha, "
-                        f"合理范围 {YIELD_MIN}-{YIELD_MAX})"
-                    )
+                # 从 study_title 推断作物
+                study_title = study.get("study_title", "") or ""
+                yield_min, yield_max = YIELD_MIN_DEFAULT, YIELD_MAX_DEFAULT
+                for crop_name, (crop_min, crop_max) in YIELD_RANGES.items():
+                    if crop_name in study_title:
+                        yield_min, yield_max = crop_min, crop_max
+                        break
+
+                if std_val < yield_min or std_val > yield_max:
+                    warnings.append({"code": "YIELD_002", "message": f"{vprefix}: 产量异常 ({std_val} kg/ha, 合理范围 {yield_min}-{yield_max})"})
                     flagged.append((si, vi))
 
             # 3. pct_over_check 与对照品种计算一致性
@@ -133,20 +148,17 @@ def validate_extraction(extraction: dict, paper_meta: dict) -> dict:
                 if ck_yield and raw_unit == ck_unit:
                     computed_pct = (raw_val - ck_yield) / ck_yield * 100
                     if abs(computed_pct - pct) > 1.0:
-                        warnings.append(
-                            f"{vprefix}: 增产率偏差 "
-                            f"(reported={pct}%, computed={computed_pct:.1f}%)"
-                        )
+                        warnings.append({"code": "YIELD_003", "message": f"{vprefix}: 增产率偏差 (reported={pct}%, computed={computed_pct:.1f}%)"})
                         flagged.append((si, vi))
 
             # 4. yield_raw_unit 为 % 的异常
             if raw_unit == "%":
-                issues.append(f"{vprefix}: yield_raw_unit 为 %（增产比例，非实际产量）")
+                issues.append({"code": "YIELD_004", "message": f"{vprefix}: yield_raw_unit 为 %（增产比例，非实际产量）"})
                 flagged.append((si, vi))
 
             # 5. source_location 为空
             if not (v.get("source_location") or "").strip():
-                warnings.append(f"{vprefix}: source_location 为空")
+                warnings.append({"code": "SOURCE_001", "message": f"{vprefix}: source_location 为空"})
 
             # 收集品种产量用于跨 study 检查
             if std_val is not None:
@@ -158,10 +170,7 @@ def validate_extraction(extraction: dict, paper_meta: dict) -> dict:
             avg = sum(yields) / len(yields)
             for y in yields:
                 if avg > 0 and abs(y - avg) / avg > 0.5:
-                    warnings.append(
-                        f"品种 '{vname}' 跨 study 产量波动 >50%: "
-                        f"{[round(y, 0) for y in yields]}"
-                    )
+                    warnings.append({"code": "CONSISTENCY_001", "message": f"品种 '{vname}' 跨 study 产量波动 >50%: {[round(y, 0) for y in yields]}"})
                     break
 
     # 去重 flagged

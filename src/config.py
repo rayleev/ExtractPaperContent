@@ -98,6 +98,38 @@ class ConcurrencyConfig:
 
 
 @dataclass
+class UnitConversionConfig:
+    """单位换算配置，可通过 config.yaml 扩展。"""
+    mass_to_kg: dict = field(default_factory=dict)
+    area_to_ha: dict = field(default_factory=dict)
+
+
+@dataclass
+class EvidenceFieldConfig:
+    """单个字段的证据验证配置。"""
+    field: str = ""
+    required: bool = False
+    description: str = ""
+
+
+@dataclass
+class EvidenceValidationConfig:
+    """证据验证配置。"""
+    enabled: bool = True
+    fields: list = field(default_factory=list)
+
+
+@dataclass
+class ParseConfig:
+    chunked_enabled: bool = True
+    sliding_window_enabled: bool = True
+    full_text_threshold: float = 0.5
+    context_window: int = 128000
+    sliding_window_size: int = 8000
+    sliding_window_step: int = 6400
+
+
+@dataclass
 class DatabaseConfig:
     host: str = ""                  # 必填：PostgreSQL 主机地址
     port: int = 5432
@@ -132,6 +164,9 @@ class AppConfig:
     extraction: ExtractionConfig = field(default_factory=ExtractionConfig)
     geocoding: GeocodingConfig = field(default_factory=GeocodingConfig)
     concurrency: ConcurrencyConfig = field(default_factory=ConcurrencyConfig)
+    unit_conversion: UnitConversionConfig = field(default_factory=UnitConversionConfig)
+    evidence_validation: EvidenceValidationConfig = field(default_factory=EvidenceValidationConfig)
+    parse: ParseConfig = field(default_factory=ParseConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
     semantic_scholar: SemanticScholarConfig = field(default_factory=SemanticScholarConfig)
 
@@ -282,6 +317,38 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         extract_workers=c.get("extract_workers", _get_default(ConcurrencyConfig, "extract_workers")),
     )
 
+    # ── 单位换算 ──
+    uc = raw.get("unit_conversion", {})
+    unit_conversion = UnitConversionConfig(
+        mass_to_kg=uc.get("mass_to_kg", _get_default(UnitConversionConfig, "mass_to_kg")),
+        area_to_ha=uc.get("area_to_ha", _get_default(UnitConversionConfig, "area_to_ha")),
+    )
+
+    # ── 证据验证 ──
+    ev = raw.get("evidence_validation", {})
+    evidence_fields = []
+    for field_cfg in ev.get("fields", []):
+        evidence_fields.append(EvidenceFieldConfig(
+            field=field_cfg.get("field", ""),
+            required=field_cfg.get("required", False),
+            description=field_cfg.get("description", ""),
+        ))
+    evidence_validation = EvidenceValidationConfig(
+        enabled=ev.get("enabled", True),
+        fields=evidence_fields,
+    )
+
+    # ── parse ──
+    p = raw.get("parse", {})
+    parse = ParseConfig(
+        chunked_enabled=p.get("chunked_enabled", _get_default(ParseConfig, "chunked_enabled")),
+        sliding_window_enabled=p.get("sliding_window_enabled", _get_default(ParseConfig, "sliding_window_enabled")),
+        full_text_threshold=p.get("full_text_threshold", _get_default(ParseConfig, "full_text_threshold")),
+        context_window=p.get("context_window", _get_default(ParseConfig, "context_window")),
+        sliding_window_size=p.get("sliding_window_size", _get_default(ParseConfig, "sliding_window_size")),
+        sliding_window_step=p.get("sliding_window_step", _get_default(ParseConfig, "sliding_window_step")),
+    )
+
     # ── 数据库 ──
     d = raw.get("database", {})
     database = DatabaseConfig(
@@ -312,6 +379,9 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         extraction=extraction,
         geocoding=geocoding,
         concurrency=concurrency,
+        unit_conversion=unit_conversion,
+        evidence_validation=evidence_validation,
+        parse=parse,
         database=database,
         semantic_scholar=semantic_scholar,
     )

@@ -5,12 +5,15 @@ PaperProcessingGraph — LangGraph StateGraph 定义。
 
 Graph 流程:
   classify → filter → [extractable?] → download → [pdf?] → parse → extract_phase1 → extract_phase2
-    → postprocess → geocode → validate → [flagged?] → targeted_llm_validate → END
+    → [needs_lookup?] → lookup → postprocess → geocode → evidence → validate → [flagged?] → targeted_llm_validate → END
 
 分步执行:
   通过 PaperState.stop_after 控制，graph 在指定节点后提前终止。
   支持值: "classify" | "filter" | "download" | "parse" | "extract_phase1" | "extract_phase2"
-         | "postprocess" | "geocode" | "validate" | "" (完整流程)
+         | "lookup" | "postprocess" | "geocode" | "evidence" | "validate" | "" (完整流程)
+
+动态 phase:
+  parse 节点输出 needs_lookup，决定是否添加 lookup 节点。
 """
 
 from __future__ import annotations
@@ -34,8 +37,10 @@ from src.graph.nodes import (
     parse_node,
     extract_phase1_node,
     extract_phase2_node,
+    lookup_node,
     postprocess_node,
     geocode_node,
+    evidence_node,
     validate_node,
     targeted_llm_validate_node,
 )
@@ -112,8 +117,17 @@ def _route_after_phase1(state: PaperState) -> str:
 
 
 def _route_after_phase2(state: PaperState) -> str:
-    """extract_phase2 后：检查 stop_after，否则进入 postprocess。"""
+    """extract_phase2 后：根据 needs_lookup 决定是否进入 lookup，否则进入 postprocess。"""
     if _should_stop(state, "extract_phase2"):
+        return "done"
+    if state.get("needs_lookup"):
+        return "lookup"
+    return "continue"
+
+
+def _route_after_lookup(state: PaperState) -> str:
+    """lookup 后：检查 stop_after，否则进入 postprocess。"""
+    if _should_stop(state, "lookup"):
         return "done"
     return "continue"
 
@@ -130,8 +144,15 @@ def _route_after_postprocess(state: PaperState) -> str:
 
 
 def _route_after_geocode(state: PaperState) -> str:
-    """geocode 后：检查 stop_after，否则进入 validate。"""
+    """geocode 后：检查 stop_after，否则进入 evidence。"""
     if _should_stop(state, "geocode"):
+        return "done"
+    return "continue"
+
+
+def _route_after_evidence(state: PaperState) -> str:
+    """evidence 后：检查 stop_after，否则进入 validate。"""
+    if _should_stop(state, "evidence"):
         return "done"
     return "continue"
 
@@ -172,15 +193,19 @@ def build_paper_graph(
     graph.add_node("download", _timed("download",
         lambda s: download_node(s, config, ss_client)))
     graph.add_node("parse", _timed("parse",
-        lambda s: parse_node(s, config, mineru_client)))
+        lambda s: parse_node(s, config, mineru_client, llm)))
     graph.add_node("extract_phase1", _timed("extract_phase1",
         lambda s: extract_phase1_node(s, config, llm)))
     graph.add_node("extract_phase2", _timed("extract_phase2",
         lambda s: extract_phase2_node(s, config, llm)))
+    graph.add_node("lookup", _timed("lookup",
+        lambda s: lookup_node(s, config, llm)))
     graph.add_node("postprocess", _timed("postprocess",
         lambda s: postprocess_node(s, config)))
     graph.add_node("geocode", _timed("geocode",
         lambda s: geocode_node(s, config, geocoder)))
+    graph.add_node("evidence", _timed("evidence",
+        lambda s: evidence_node(s, config, llm)))
     graph.add_node("validate", _timed("validate",
         lambda s: validate_node(s, config)))
     graph.add_node("targeted_validate", _timed("targeted_validate",
@@ -205,12 +230,18 @@ def build_paper_graph(
         {"continue": "extract_phase2", "skip": END, "done": END})
 
     graph.add_conditional_edges("extract_phase2", _route_after_phase2,
+        {"continue": "postprocess", "lookup": "lookup", "done": END})
+
+    graph.add_conditional_edges("lookup", _route_after_lookup,
         {"continue": "postprocess", "done": END})
 
     graph.add_conditional_edges("postprocess", _route_after_postprocess,
         {"continue": "geocode", "fail": END, "skip": END, "done": END})
 
     graph.add_conditional_edges("geocode", _route_after_geocode,
+        {"continue": "evidence", "done": END})
+
+    graph.add_conditional_edges("evidence", _route_after_evidence,
         {"continue": "validate", "done": END})
 
     graph.add_conditional_edges("validate", _route_after_validate,

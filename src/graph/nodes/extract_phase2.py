@@ -1,8 +1,13 @@
 """
-Phase 2 提取节点 — 逐试验章节提取 study + variety 数据。
+Phase 2 提取节点 — 品种级提取。
 
-对每个试验章节独立调用 LLM，传入章节完整内容和 Phase 1 识别的上下文。
-多次 LLM 调用串行执行（受 LLM 限流约束），是整条 pipeline 的主要耗时点。
+对每个试验独立调用 LLM，传入试验内容、Phase 1 识别的试验上下文、
+parse 节点的提取提示（extraction_hints）。
+
+策略：
+  - 利用 extraction_hints 辅助品种名定位
+  - needs_lookup 的品种需要去材料方法/补充表查找全称
+  - 输出 varieties 列表（品种级字段）
 """
 
 from __future__ import annotations
@@ -35,16 +40,27 @@ def extract_phase2_node(
     llm: LLMClient,
 ) -> dict:
     """
-    Phase 2 提取：逐试验章节提取品种产量数据。
+    Phase 2 提取：品种级提取。
 
-    每个 experiment section 独立调用 LLM，传入章节全文 + Phase 1 上下文。
-    输出 studies 列表，每个 study 包含 varieties 数组。
+    对每个试验，提取品种产量数据（varieties 列表）。
+
+    输入：
+      - 试验内容（从文档树收集）
+      - Phase 1 上下文（试验标题、年份、地点等）
+      - parse 提取提示（品种名、位置、查找需求）
+
+    输出：
+      - phase2_results: 每个 study 的 varieties 列表
     """
     pid = state["paper_id"]
     paper_meta = state["paper_meta"]
     phase1 = state.get("phase1_result", {})
-    experiment_sections = phase1.get("experiment_sections", [])
+    studies = phase1.get("studies", [])
     md_text = state.get("parsed_text", "")
+
+    # parse 输出（提取提示）
+    doc_context = state.get("doc_context", {})
+    extraction_hints = state.get("extraction_hints", [])
 
     prompt_template = _load_prompt("extract_study.txt")
 
@@ -64,23 +80,71 @@ def extract_phase2_node(
 
     logger.info(
         f"  [{pid[:25]}] Phase 2: {len(actual_exp_sections)} experiment sections, "
-        f"{len(experiment_sections)} from Phase 1"
+        f"{len(studies)} from Phase 1, "
+        f"{len(extraction_hints)} extraction hints"
     )
 
-    studies = []
+    # 构建提取提示文本（含上下文片段）
+    if extraction_hints:
+        hints_lines = []
+        for h in extraction_hints:
+            action = h.get("action", "?")
+            field = h.get("field", "")
+            value = h.get("value", "")
+            context = h.get("context", "")
+            reason = h.get("reason", "")
+            hints_lines.append(f"- [{action}] {field}: {value}")
+            if context:
+                hints_lines.append(f"  上下文: {context}")
+            if reason:
+                hints_lines.append(f"  原因: {reason}")
+        hints_text = "\n".join(hints_lines)
+    else:
+        hints_text = "(无提取提示)"
+
+    # 补充材料信息
+    has_supplementary = doc_context.get("has_supplementary", False)
+    table_refs = doc_context.get("table_refs", [])
+    variety_groups = doc_context.get("variety_groups", [])
+    supplementary_info = ""
+    if has_supplementary:
+        supplementary_info = f"\n**补充材料**: 是（表格引用: {', '.join(table_refs) or '无'}）"
+    elif table_refs:
+        supplementary_info = f"\n**表格引用**: {', '.join(table_refs)}"
+
+    # 共用品种信息
+    shared_varieties_info = ""
+    if variety_groups:
+        shared_lines = []
+        for group in variety_groups:
+            group_name = group.get("group_name", "")
+            shared = group.get("shared_across_studies", False)
+            varieties = group.get("varieties", [])
+            for v in varieties:
+                vname = v.get("name", "")
+                is_check = v.get("is_check", False)
+                source_tables = v.get("source_tables", [])
+                check_str = "（CK）" if is_check else ""
+                tables_str = f" 出现在: {', '.join(source_tables)}" if source_tables else ""
+                shared_str = " [共用]" if shared else ""
+                shared_lines.append(f"- {vname}{check_str}{shared_str}{tables_str}")
+        if shared_lines:
+            shared_varieties_info = "\n\n## 共用品种（多个试验共用）\n" + "\n".join(shared_lines)
+
+    phase2_results = []
     for i, exp_node in enumerate(actual_exp_sections):
-        # 从 Phase 1 获取该试验的上下文（标题、年份、地点）
+        # 从 Phase 1 获取该试验的上下文
         study_context = ""
-        if i < len(experiment_sections):
-            es = experiment_sections[i]
+        if i < len(studies):
+            s = studies[i]
             study_context = (
-                f"章节标题: {es.get('section_title', exp_node.title)}\n"
-                f"试验名称: {es.get('study_title', '')}\n"
-                f"试验年份: {es.get('trial_year', '')}\n"
-                f"试验地点: {es.get('site_description', '')}"
+                f"试验名称: {s.get('study_title', exp_node.title)}\n"
+                f"试验年份: {s.get('trial_year', '')}\n"
+                f"试验地点: {s.get('site_administrative_region', '')}\n"
+                f"试验站: {s.get('experimental_site_name', '')}"
             )
         else:
-            study_context = f"章节标题: {exp_node.title}"
+            study_context = f"试验名称: {exp_node.title}"
 
         # 收集章节内容（子节点递归收集）
         section_content = collect_content(exp_node)
@@ -93,9 +157,10 @@ def extract_phase2_node(
             doi=paper_meta.get("doi", ""),
             title=paper_meta.get("title", ""),
             year=paper_meta.get("year", ""),
-            study_context=study_context,
+            study_context=study_context + supplementary_info + shared_varieties_info,
             section_content=section_content,
             category_instruction=category_instruction,
+            extraction_hints=hints_text,
         )
 
         # LLM 调用 — 这是主要耗时步骤
@@ -103,18 +168,25 @@ def extract_phase2_node(
         study_data = llm.call_json(prompt, max_tokens=max_tokens)
 
         if study_data:
-            studies.append(study_data)
-            n_varieties = len(study_data.get("varieties", []))
+            varieties = study_data.get("varieties", [])
+            phase2_results.append({
+                "study_index": i,
+                "varieties": varieties,
+            })
             logger.info(
                 f"  [{pid[:25]}] Study {i+1}: '{exp_node.title[:40]}' → "
-                f"{n_varieties} varieties"
+                f"{len(varieties)} varieties"
             )
         else:
             logger.warning(
                 f"  [{pid[:25]}] Study {i+1}: '{exp_node.title[:40]}' → FAILED"
             )
+            phase2_results.append({
+                "study_index": i,
+                "varieties": [],
+            })
 
     return {
-        "phase2_results": studies,
+        "phase2_results": phase2_results,
         "status": "phase2_done",
     }

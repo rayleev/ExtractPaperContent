@@ -7,15 +7,17 @@ from src.graph.nodes.filter import filter_node
 from src.graph.nodes.parse import parse_node
 from src.graph.nodes.extract_phase1 import extract_phase1_node
 from src.graph.nodes.extract_phase2 import extract_phase2_node
+from src.graph.nodes.lookup import lookup_node
 from src.graph.nodes.postprocess import postprocess_node
 from src.graph.nodes.geocode import geocode_node
+from src.graph.nodes.evidence import evidence_node
 from src.graph.nodes.validate import validate_node, targeted_llm_validate_node
 
 __all__ = [
     "search_node",
     "download_node",
     "classify_node", "filter_node", "parse_node",
-    "extract_phase1_node", "extract_phase2_node",
-    "postprocess_node", "geocode_node",
+    "extract_phase1_node", "extract_phase2_node", "lookup_node",
+    "postprocess_node", "geocode_node", "evidence_node",
     "validate_node", "targeted_llm_validate_node",
 ]

@@ -25,6 +25,15 @@ python run.py --step extract           # 完整流程
 # 处理特定论文
 python run.py --paper "早稻"           # 按 DOI/标题关键词匹配
 
+# 启动 HTTP API 服务
+python run.py --serve --port 8000
+
+# 数据库初始化
+python tests/init_db.py
+
+# 通过 SS paper_id 导入论文
+python tests/import_by_id.py <ss_paper_id>
+
 # 地理编码模块自测（无需 config.yaml 时传 tk）
 python -m src.core.geocoder [tk]
 
@@ -33,40 +42,47 @@ del cache\langgraph_checkpoint.db
 del cache\geocoding_cache.json
 ```
 
-**无 lint / 无测试框架**。项目未配置 ruff/mypy/pytest。修改后请手动跑 `python -m src.core.geocoder` 或 `python run.py --step classify` 验证。
-
 ## Architecture
 
 ### 有向图流程 (src/graph/graph.py)
 
 ```
-START → classify → filter → parse → extract_phase1 → extract_phase2
-  → postprocess → geocode → validate → [flagged?] → targeted_validate → END
+search → classify → filter → download → parse → extract_phase1 → extract_phase2
+  → [lookup] → postprocess → geocode → evidence → validate → [targeted_validate] → END
 ```
 
 - **条件路由**：filter/parse/phase1/postprocess 失败时提前退出
+- **动态 phase**：parse 节点输出 needs_lookup，决定是否添加 lookup 节点
 - **分步执行**：通过 `PaperState.stop_after` 字段控制，在指定节点后 END
 - **节点计时**：每个节点包装 `_timed()`，>1s 打印 INFO
 - **断点续跑**：`SqliteSaver` checkpoint，thread_id = paper_id
-
-### 状态定义 (src/graph/state.py)
-
-`PaperState(TypedDict)` — 单篇论文在 pipeline 中的完整状态，各节点依次读写。关键字段：
-- 输入：`paper_id`, `paper_meta`, `stop_after`
-- 提取结果：`phase1_result`, `phase2_results`, `extraction`（最终合并结果）
-- 追踪：`status`, `errors`, `flagged_records`
 
 ### 批量编排 (src/graph/batch.py)
 
 `BatchOrchestrator` 管理并发处理：
 - **滑动窗口并发**：ThreadPoolExecutor 始终保持 N 个任务在跑（`extract_workers`）
-- **注册表防重**：SQLite `paper_status` 表记录每篇论文完成的最高步骤
-- **输出持久化**：完整提取结果写入 `output/paper_data.db`
+- **注册表防重**：PostgreSQL `paper_status` 表记录每篇论文完成的最高步骤
+- **输出持久化**：完整提取结果写入 PostgreSQL 数据库
 
 ### 两阶段提取 (src/graph/nodes/extract_phase1.py, extract_phase2.py)
 
-- **Phase 1**（论文级）：输入摘要+大纲+方法 → 识别试验章节，输出 `phase1_result`
-- **Phase 2**（试验级，**主要瓶颈**）：逐章节 LLM 调用 → 每个试验 1 次大 LLM 调用（max_tokens=8192）
+- **Phase 1**（论文级+试验级）：输入 parse 输出 + 摘要+大纲+方法 → 识别试验章节，输出 `phase1_result`
+- **Phase 2**（品种级，**主要瓶颈**）：逐试验 LLM 调用 → 每个试验 1 次大 LLM 调用（max_tokens=8192）
+
+### 全文理解 (src/graph/nodes/parse.py)
+
+parse 节点使用 LLM 理解全文，输出：
+- `doc_context`：作物列表、品种共用关系、补充材料
+- `extraction_hints`：实体位置、查找需求
+- `variety_groups`：共用品种列表（如 CK 对照）
+- `needs_lookup`：是否需要 lookup 阶段
+
+### 证据验证 (src/graph/nodes/evidence.py)
+
+evidence 节点批量验证重要字段的证据：
+- 从 extraction_hints 获取候选证据
+- 用 LLM 批量验证（对比原文）
+- 输出 evidence_nodes（含原文位置和片段）
 
 ### 地理编码 (src/geocoder.py)
 
@@ -89,14 +105,26 @@ Pydantic v2 三级层次：`ExtractionResult → PaperInfo + List[StudyInfo] →
 - `[PROGRAM]`：程序自动计算（如 yield_standard_value）
 - `[DO NOT FILL]`：系统后处理填充（如 geo_source, notes）
 
-### 单位换算 (src/core/models.py)
+### 单位换算 (config.yaml)
 
-LLM 提取原始产量值和单位，程序自动换算为 kg/ha：
-- kg/ha, kg/hm² → ×1
-- t/ha, t/hm² → ×1000
-- kg/亩, kg/mu → ×15
-- 斤/亩 → ×7.5
-- g/株, kg/plot → 不可换算 → None
+LLM 提取原始产量值和单位，程序自动换算为 kg/ha。换算表在 `config.yaml` 中配置：
+
+```yaml
+unit_conversion:
+  mass_to_kg:
+    g: 0.001
+    kg: 1.0
+    t: 1000.0
+    斤: 0.5
+  area_to_ha:
+    m2: 0.0001
+    ha: 1.0
+    hm2: 1.0
+    亩: 0.0666667
+    667m2: 0.0666667
+```
+
+**支持多种单位格式**：Unicode 上标（`kg·ha⁻¹`）、普通减号（`t·hm-2`）、中间点（`kg·hm-2`）、中文单位（`g·株-1`）
 
 ## Configuration (config.yaml)
 
@@ -105,16 +133,35 @@ LLM 提取原始产量值和单位，程序自动换算为 kg/ha：
 关键配置项：
 - `extraction.crops`：目标作物列表，**无需改 prompt**，classify 节点动态注入
 - `extraction.extractable_categories`：可提取的论文类别
+- `unit_conversion`：单位换算表，可扩展
+- `evidence_validation.fields`：证据验证字段配置
+- `parse`：parse 节点策略配置（分段/滑动窗口/阈值）
 - `geocoding.tianditu_tk`：天地图 API Key（推荐）
-- `geocoding.baidu_api_key`：百度 Key（可选，空则跳过）
 - `concurrency.extract_workers`：并发论文数（滑动窗口）
+- `database`：PostgreSQL 数据库配置
+
+## Database
+
+**主数据库**：PostgreSQL
+
+关键表：
+- `papers`：论文级元数据（含 `parse_context` JSONB）
+- `studies`：试验级信息
+- `varieties`：品种产量数据（主数据表）
+- `varieties_flat`：paper+study+variety 全字段宽表（交接用）
+- `classification`：论文分类结果
+- `validation_issues`：验证问题明细（含编码，如 YIELD_001）
+- `evidence`：证据验证明细
+- `paper_status`：论文处理状态（兼注册表）
+- `_schema_doc`：字段文档表（数据字典）
 
 ## Output
 
-- **主数据库**：`output/paper_data.db`（SQLite，跨运行共享）
+- **主数据库**：PostgreSQL
 - **交接用宽表**：`varieties_flat`（paper+study+variety 全字段）
-- **数据字典**：DB 内 `_schema_doc` 表，103 个字段中文注释
+- **数据字典**：DB 内 `_schema_doc` 表，字段中文注释
 - **运行日志**：`output/runs/{timestamp}/logs/extractor.log`（含节点计时）
+- **HTTP API**：FastAPI 提供 REST API 和监控面板
 
 ## Development Notes
 
@@ -144,6 +191,8 @@ del cache\langgraph_checkpoint.db
 |------|------|------|
 | MinerU | PDF → Markdown | 是 |
 | LLM API (OpenAI 兼容) | 分类 + 提取 | 是 |
+| Semantic Scholar API | 论文搜索 + PDF 下载 | 否 |
 | 天地图 API | 地理编码（推荐） | 是 |
 | Open-Meteo | 海拔（无需 Key） | 是（兜底用） |
 | 百度地图 API | 地理编码备选 | 否 |
+| PostgreSQL | 数据存储 | 是 |

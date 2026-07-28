@@ -13,19 +13,11 @@ from pathlib import Path
 from src.config import AppConfig
 from src.clients.llm import LLMClient
 from src.graph.state import PaperState
+from src.core.constants import CHINA_PROVINCE_KEYWORDS
 
 logger = logging.getLogger("paper_extractor")
 
 PROMPT_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
-
-# 中国省级行政区关键词（用于修正 LLM 的 Unknown 判断）
-_CHINA_PROVINCE_KEYWORDS = [
-    "北京", "天津", "上海", "重庆",
-    "河北", "山西", "辽宁", "吉林", "黑龙江", "江苏", "浙江", "安徽",
-    "福建", "江西", "山东", "河南", "湖北", "湖南", "广东", "海南",
-    "四川", "贵州", "云南", "陕西", "甘肃", "青海", "内蒙古", "广西","香港","澳门",
-    "西藏", "宁夏", "新疆", "台湾",
-]
 
 
 def _correct_research_country(classification: dict, paper_meta: dict) -> dict:
@@ -39,7 +31,7 @@ def _correct_research_country(classification: dict, paper_meta: dict) -> dict:
 
     # LLM 返回 Unknown 或空，检查标题/摘要中的中国地名
     text = (paper_meta.get("title", "") + " " + paper_meta.get("abstract", "")).lower()
-    if any(province in text for province in _CHINA_PROVINCE_KEYWORDS):
+    if any(province in text for province in CHINA_PROVINCE_KEYWORDS):
         classification["research_country"] = "China"
         classification["reasoning"] = classification.get("reasoning", "") + " [规则修正：标题/摘要包含中国地名]"
 
@@ -89,7 +81,8 @@ def classify_node(state: PaperState, config: AppConfig, llm: LLMClient) -> dict:
     logger.info(
         f"  [{pid[:25]}] Classification: category={classification.get('category')}, "
         f"country={classification.get('research_country', '')}, "
-        f"confidence={classification.get('confidence', '')}"
+        f"confidence={classification.get('confidence', '')}, "
+        f"crops={classification.get('crops', [])}"
     )
     if not result:
         logger.warning(f"  [{pid[:25]}] LLM returned no result, defaulting to unknown")

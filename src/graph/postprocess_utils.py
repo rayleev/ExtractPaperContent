@@ -101,9 +101,8 @@ def filter_no_yield_studies(studies: List[dict]) -> tuple[int, int]:
     剔除无产量数据的 study 和无效产量记录。
 
     处理：
-      1. yield_raw_unit 为 "%" → 增产比例，非实际产量
-      2. yield_raw_value 和 yield_raw_unit 都为空 → 无效记录
-      3. study 过滤后无品种 → 删除该 study
+      1. yield_raw_value 和 yield_raw_unit 都为空，且 pct_over_check 为空 → 无效记录
+      2. study 过滤后无品种 → 删除该 study
 
     返回 (removed_studies, removed_varieties)。
     """
@@ -118,12 +117,10 @@ def filter_no_yield_studies(studies: List[dict]) -> tuple[int, int]:
         for v in varieties:
             unit = (v.get("yield_raw_unit") or "").strip()
             value = v.get("yield_raw_value")
+            pct = v.get("pct_over_check")
 
-            if unit == "%":
-                removed_varieties += 1
-                continue
-
-            if value is None and not unit:
+            # 只有产量值和增产比例都为空时，才视为无效记录
+            if value is None and not unit and pct is None:
                 removed_varieties += 1
                 continue
 

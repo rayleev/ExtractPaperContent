@@ -35,18 +35,27 @@ class PaperState(TypedDict, total=False):
     tree_outline: str                   # 标题大纲文本
     abstract_text: str                  # 摘要文本
     methods_text: str                   # 方法部分文本
+    doc_context: dict                   # Document Context（作物、study 数、chunk 列表等）
+    extraction_hints: list              # 提取提示（字段位置、查找需求）
+    needs_lookup: bool                  # 是否需要 lookup phase（去补充材料/表格查找）
 
     # ── extract_phase1 节点 ──
-    phase1_result: dict                 # {paper: {...}, experiment_sections: [...]}
+    phase1_result: dict                 # {paper: {...}, studies: [...]}
 
     # ── extract_phase2 节点 ──
-    phase2_results: list                # [{study_title, varieties, ...}, ...]
+    phase2_results: list                # [{study_index, varieties}, ...]
+
+    # ── lookup 节点（动态，needs_lookup=True 时触发）──
+    lookup_results: list                # lookup 节点输出（补充后的信息）
 
     # ── postprocess 节点 ──
     extraction: dict                    # {paper: {...}, studies: [...]}  最终合并结果
 
     # ── geocode 节点 ──
     geocoded: bool                      # 是否完成地理编码
+
+    # ── evidence 节点（证据验证）──
+    evidence_nodes: list                # 验证后的证据列表
 
     # ── validate 节点 ──
     validation_report: dict             # {issues: [], warnings: [], stats: {...}}

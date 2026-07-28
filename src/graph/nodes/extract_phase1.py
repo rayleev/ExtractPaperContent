@@ -1,8 +1,12 @@
 """
-Phase 1 提取节点 — 论文级元数据 + 试验章节识别。
+Phase 1 提取节点 — 论文级 + 试验级提取。
 
-输入：摘要 + 标题大纲 + 方法部分（精简上下文，不传全文）
-输出：paper 字段 + experiment_sections 列表（为 Phase 2 做准备）
+输入：parse 输出（doc_context + extraction_hints）+ 摘要 + 标题大纲 + 方法部分
+输出：paper 元数据 + studies 列表（试验级信息）
+
+策略：
+  - parse 成功时，复用 doc_context（作物、study 数等），extraction_hints 辅助定位
+  - parse 失败时，回退到原逻辑，自己理解全部
 """
 
 from __future__ import annotations
@@ -30,10 +34,13 @@ def extract_phase1_node(
     llm: LLMClient,
 ) -> dict:
     """
-    Phase 1 提取：从摘要、大纲和方法部分提取论文级信息。
+    Phase 1 提取：论文级 + 试验级信息。
 
-    识别所有试验章节（一个年份×一个站点 = 一个试验），
-    为 Phase 2 的逐章节提取提供上下文。
+    提取论文元数据（crop_species 等）和试验级信息（study 列表）。
+
+    策略：
+      - parse 成功时，复用 doc_context，利用 extraction_hints 辅助定位
+      - parse 失败时，回退到原逻辑，自己理解全部
     """
     pid = state["paper_id"]
     paper_meta = state["paper_meta"]
@@ -42,6 +49,70 @@ def extract_phase1_node(
     outline = state.get("tree_outline", "")
     abstract = state.get("abstract_text", "")[:5000]
     methods = state.get("methods_text", "")[:15000]
+
+    # parse 输出（辅助上下文）
+    doc_context = state.get("doc_context", {})
+    extraction_hints = state.get("extraction_hints", [])
+    parse_success = bool(doc_context)
+
+    # 获取作物列表
+    crops = doc_context.get("crops", [])
+    classification = state.get("classification", [])
+    if not crops and classification:
+        crops = classification.get("crops", [])
+
+    # 构建辅助上下文文本
+    if parse_success:
+        hints_text = "\n".join(
+            f"- [{h.get('action', '?')}] {h.get('field', '')}: {h.get('value', '')}"
+            for h in extraction_hints
+        ) or "(无提取提示)"
+
+        crops_text = ", ".join(crops) if crops else doc_context.get('crop', '')
+
+        auxiliary_context = f"""
+---
+
+## 辅助上下文（parse 节点输出）
+
+以下信息已由 parse 节点识别，请**复用**并**验证**：
+
+**作物**: {crops_text}
+**Study 数量**: {doc_context.get('study_count', '')}
+**补充材料**: {'是' if doc_context.get('has_supplementary') else '否'}
+**表格引用**: {', '.join(doc_context.get('table_refs', [])) or '无'}
+**数据文件链接**: {doc_context.get('data_file_link', '无')}
+
+## 提取提示（extraction_hints）
+
+以下提示可帮助你**定位**相关内容：
+
+{hints_text}
+
+**使用方式**：
+- `ok` → 信息完整，可直接复用
+- `needs_lookup` → 需要去材料方法/补充表/表格查找完整信息
+- `verify` → 信息不足或模糊，需核实
+
+---
+
+## 多作物处理
+
+如果论文研究多种作物（如水稻和玉米），请按作物拆分 study：
+- 每个 study 只包含一种作物的试验
+- study_title 应包含作物名称（如"水稻品种比较试验"、"玉米品种比较试验"）
+- 从 extraction_hints 中筛选该作物相关的提示
+
+"""
+    else:
+        auxiliary_context = """
+---
+
+## 辅助上下文
+
+parse 节点未成功，请自行理解论文内容。
+
+"""
 
     prompt = prompt_template.format(
         paper_id=pid,
@@ -52,19 +123,21 @@ def extract_phase1_node(
         outline=outline,
         abstract=abstract,
         methods=methods,
+        auxiliary_context=auxiliary_context,
     )
 
-    logger.info(f"  [{pid[:25]}] Phase1: prompt {len(prompt)} chars, calling LLM...")
+    logger.info(f"  [{pid[:25]}] Phase1: prompt {len(prompt)} chars, "
+                f"parse={'success' if parse_success else 'failed'}, calling LLM...")
     result = llm.call_json(prompt, max_tokens=config.llm.max_tokens)
     if not result:
         logger.warning(f"  [{pid[:25]}] Phase1 FAILED: LLM returned no result")
         return {
-            "phase1_result": {"paper": {}, "experiment_sections": []},
+            "phase1_result": {"paper": {}, "studies": []},
             "status": "phase1_failed",
         }
 
-    sections = result.get("experiment_sections", [])
-    logger.info(f"  [{pid[:25]}] Phase1 done: {len(sections)} experiment section(s) identified")
+    studies = result.get("studies", [])
+    logger.info(f"  [{pid[:25]}] Phase1 done: {len(studies)} study/studies identified")
 
     return {
         "phase1_result": result,

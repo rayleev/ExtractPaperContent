@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS papers (
     data_file_link  TEXT,
     data_file_description TEXT,
     data_file_version TEXT,
-    extracted_at    TEXT
+    extracted_at    TEXT,
+    parse_context   JSONB
 );
 
 -- 试验级数据
@@ -176,7 +177,22 @@ CREATE TABLE IF NOT EXISTS validation_issues (
     paper_id        TEXT NOT NULL,
     issue_type      TEXT NOT NULL,
     severity        TEXT NOT NULL,
+    code            TEXT,
     message         TEXT
+);
+
+-- 证据验证明细
+CREATE TABLE IF NOT EXISTS evidence (
+    id              SERIAL PRIMARY KEY,
+    paper_id        TEXT NOT NULL,
+    field_name      TEXT NOT NULL,
+    field_value     TEXT,
+    source_location TEXT,
+    source_text     TEXT,
+    confidence      TEXT,
+    verified        INTEGER,
+    reason          TEXT,
+    created_at      TEXT
 );
 
 -- 论文处理状态（兼任务协调注册表）
@@ -227,6 +243,8 @@ CREATE INDEX IF NOT EXISTS idx_studies_year ON studies(trial_year);
 CREATE INDEX IF NOT EXISTS idx_classification_cat ON classification(category);
 CREATE INDEX IF NOT EXISTS idx_validation_paper ON validation_issues(paper_id);
 CREATE INDEX IF NOT EXISTS idx_validation_severity ON validation_issues(severity);
+CREATE INDEX IF NOT EXISTS idx_evidence_paper ON evidence(paper_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_field ON evidence(field_name);
 CREATE INDEX IF NOT EXISTS idx_paper_status ON paper_status(status);
 CREATE INDEX IF NOT EXISTS idx_paper_status_claimed ON paper_status(claimed_by);
 CREATE INDEX IF NOT EXISTS idx_pdf_missing ON pdf_missing(paper_id);
@@ -302,6 +320,7 @@ _TABLE_COMMENTS = {
     "varieties_flat": "品种产量宽表（扁平化交接用），每行含 paper+study+variety 全部字段",
     "classification": "论文分类结果（5类），paper_id FK → paper_status",
     "validation_issues": "验证问题明细（扁平化），issue=严重/warning=警告",
+    "evidence": "证据验证明细（字段来源追溯）",
     "paper_status": "论文处理状态（兼任务协调注册表+搜索元数据存储）",
     "pdf_missing": "无法获取 PDF 的论文记录",
     "_schema_doc": "字段文档表（数据字典），自动维护",
@@ -426,7 +445,19 @@ _SCHEMA_DOCS = [
     ("validation_issues", "paper_id", "TEXT", "关联论文ID", 1, "外键"),
     ("validation_issues", "issue_type", "TEXT", "问题类型: issue（严重）/ warning（警告）", 1, "规则引擎"),
     ("validation_issues", "severity", "TEXT", "严重级别: error / warning", 1, "规则引擎"),
+    ("validation_issues", "code", "TEXT", "问题编码（如 YIELD_001）", 0, "规则引擎"),
     ("validation_issues", "message", "TEXT", "问题描述（含具体数值和上下文）", 1, "规则引擎"),
+    # ── evidence 表 ──
+    ("evidence", "id", "SERIAL", "自增主键", 1, "系统生成"),
+    ("evidence", "paper_id", "TEXT", "关联论文ID", 1, "外键"),
+    ("evidence", "field_name", "TEXT", "字段名（如 variety_name）", 1, "配置"),
+    ("evidence", "field_value", "TEXT", "字段值", 0, "LLM提取"),
+    ("evidence", "source_location", "TEXT", "来源位置（如'表3'）", 0, "LLM验证"),
+    ("evidence", "source_text", "TEXT", "原文片段", 0, "LLM验证"),
+    ("evidence", "confidence", "TEXT", "置信度: high/medium/low", 0, "LLM评估"),
+    ("evidence", "verified", "INTEGER", "是否通过验证（1=是, 0=否）", 0, "LLM验证"),
+    ("evidence", "reason", "TEXT", "判断原因", 0, "LLM生成"),
+    ("evidence", "created_at", "TEXT", "创建时间（ISO 8601）", 1, "系统生成"),
     # ── paper_status 表 ──
     ("paper_status", "paper_id", "TEXT", "论文唯一标识", 1, "系统生成"),
     ("paper_status", "title", "TEXT", "论文标题（截取前80字符）", 0, "元数据"),
@@ -517,16 +548,28 @@ def insert_extraction(conn, result: dict, paper_id: str):
 
         # ── papers 表 ──
         # doi/title/year/journal 从搜索元数据直填（权威来源），crop_species 等从 LLM 取
+        # parse_context 从 parse 节点输出（doc_context + extraction_hints）
+        # lookup_results 从 lookup 节点输出（补充后的信息）
+        # evidence_nodes 从 evidence 节点输出（验证后的证据）
+        parse_context_data = {
+            "doc_context": result.get("doc_context", {}),
+            "extraction_hints": result.get("extraction_hints", []),
+            "needs_lookup": result.get("needs_lookup", False),
+            "lookup_results": result.get("lookup_results", []),
+            "evidence_nodes": result.get("evidence_nodes", []),
+        }
         cur.execute("""
             INSERT INTO papers
             (paper_id, doi, title, publication_year, journal_name, crop_species,
-             language, category, data_file_link, data_file_description, data_file_version, extracted_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             language, category, data_file_link, data_file_description, data_file_version,
+             extracted_at, parse_context)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (paper_id) DO UPDATE SET
                 doi = EXCLUDED.doi, title = EXCLUDED.title,
                 publication_year = EXCLUDED.publication_year, journal_name = EXCLUDED.journal_name,
                 crop_species = EXCLUDED.crop_species, language = EXCLUDED.language,
-                category = EXCLUDED.category, extracted_at = EXCLUDED.extracted_at
+                category = EXCLUDED.category, extracted_at = EXCLUDED.extracted_at,
+                parse_context = EXCLUDED.parse_context
         """, (
             paper_id,
             meta.get("doi") or paper.get("paper_doi"),
@@ -540,6 +583,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
             paper.get("data_file_description"),
             paper.get("data_file_version"),
             extracted_at,
+            json.dumps(parse_context_data, ensure_ascii=False),
         ))
 
         # ── studies 表 ──
@@ -652,6 +696,27 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     v.get("confidence_level"), extracted_at,
                 ))
 
+        # ── evidence 表 ──
+        evidence_nodes = result.get("evidence_nodes", [])
+        for ev in evidence_nodes:
+            verified_int = 1 if ev.get("verified") else 0
+            cur.execute("""
+                INSERT INTO evidence
+                (paper_id, field_name, field_value, source_location,
+                 source_text, confidence, verified, reason, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                paper_id,
+                ev.get("field", ""),
+                str(ev.get("value", ""))[:500],
+                ev.get("source_location", ""),
+                ev.get("source_text", ""),
+                ev.get("confidence", ""),
+                verified_int,
+                ev.get("reason", ""),
+                extracted_at,
+            ))
+
     conn.commit()
 
 
@@ -705,15 +770,19 @@ def insert_validation(conn, results: List[dict]):
             report = record.get("validation_report", {})
 
             for issue in report.get("issues", []):
+                code = issue.get("code", "") if isinstance(issue, dict) else ""
+                message = issue.get("message", issue) if isinstance(issue, dict) else issue
                 cur.execute(
-                    "INSERT INTO validation_issues (paper_id, issue_type, severity, message) VALUES (%s, %s, %s, %s)",
-                    (paper_id, "issue", "error", issue))
+                    "INSERT INTO validation_issues (paper_id, issue_type, severity, code, message) VALUES (%s, %s, %s, %s, %s)",
+                    (paper_id, "issue", "error", code, message))
                 row_count += 1
 
             for warning in report.get("warnings", []):
+                code = warning.get("code", "") if isinstance(warning, dict) else ""
+                message = warning.get("message", warning) if isinstance(warning, dict) else warning
                 cur.execute(
-                    "INSERT INTO validation_issues (paper_id, issue_type, severity, message) VALUES (%s, %s, %s, %s)",
-                    (paper_id, "warning", "warning", warning))
+                    "INSERT INTO validation_issues (paper_id, issue_type, severity, code, message) VALUES (%s, %s, %s, %s, %s)",
+                    (paper_id, "warning", "warning", code, message))
                 row_count += 1
 
     conn.commit()
@@ -892,7 +961,7 @@ def get_table_stats(conn) -> dict:
     stats = {}
     with conn.cursor() as cur:
         for table in ("papers", "studies", "varieties", "varieties_flat",
-                       "classification", "validation_issues", "paper_status", "pdf_missing"):
+                       "classification", "validation_issues", "evidence", "paper_status", "pdf_missing"):
             cur.execute(f"SELECT COUNT(*) FROM {table}")
             stats[table] = cur.fetchone()[0]
     return stats

@@ -16,11 +16,7 @@ import requests
 
 logger = logging.getLogger("paper_extractor")
 
-# 搜索时默认请求的字段列表
-DEFAULT_SEARCH_FIELDS = (
-    "paperId,title,doi,pmid,pmcid,abstract,authors,keywords,"
-    "publication_year,journal,metadata,resources"
-)
+from src.core.constants import DEFAULT_SEARCH_FIELDS
 
 
 class SemanticScholarClient:

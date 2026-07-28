@@ -39,9 +39,35 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
     phase2 = state.get("phase2_results", [])
 
     paper_info = phase1.get("paper", {})
+    phase1_studies = phase1.get("studies", [])
+
+    # ── 合并 Phase 1（study 级字段）+ Phase 2（varieties）──
+    # Phase 1 输出 study 级字段（study_title, trial_year, site 等）
+    # Phase 2 输出 varieties 列表（品种级字段）
+    combined_studies = []
+    for i, phase1_study in enumerate(phase1_studies):
+        # 复制 phase1 的 study 级字段
+        study = dict(phase1_study)
+        # 查找对应的 phase2 varieties
+        phase2_varieties = []
+        for phase2_item in phase2:
+            if phase2_item.get("study_index") == i:
+                phase2_varieties = phase2_item.get("varieties", [])
+                break
+        study["varieties"] = phase2_varieties
+        combined_studies.append(study)
+
+    # phase2 中可能有 phase1 未覆盖的 study（兜底）
+    for phase2_item in phase2:
+        idx = phase2_item.get("study_index", -1)
+        if idx >= len(phase1_studies):
+            combined_studies.append({
+                "varieties": phase2_item.get("varieties", [])
+            })
+
     combined = {
         "paper": paper_info,
-        "studies": phase2,
+        "studies": combined_studies,
     }
 
     # ── Step 0: 国家复核（提取后基于全文判断，仅放行中国论文）──
@@ -49,7 +75,7 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
     # （兜底用行政区划）复核：
     #   中国（含台湾）        → study.country 归一化为 'CN'，继续后续处理
     #   非中国 / 无法确认     → status='skipped'，不写入结果表（batch 层标记 paper_status）
-    is_cn, evidence = infer_paper_country(phase2)
+    is_cn, evidence = infer_paper_country(combined_studies)
     if not is_cn:
         if evidence == "undetermined":
             reason = "study country undetermined after extraction (no China signal in full text)"
@@ -65,7 +91,7 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
         }
 
     # 中国论文：归一化 study.country 为 'CN'（台湾/空值也统一为 CN）
-    for study in phase2:
+    for study in combined_studies:
         c = study.get("country")
         if is_china(c) or is_uncertain(c):
             study["country"] = "CN"
@@ -74,7 +100,7 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
     # ── Pydantic 验证 + 产量换算（yield_raw → yield_standard）──
     try:
         result = ExtractionResult.model_validate(combined)
-        result.compute_standard_yields()
+        result.compute_standard_yields(config)  # 传入 config 以使用配置的换算表
         extraction = result.model_dump()
         n_studies = len(extraction.get("studies", []))
         n_varieties = sum(len(s.get("varieties", [])) for s in extraction.get("studies", []))

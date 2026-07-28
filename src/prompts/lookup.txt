@@ -1,0 +1,110 @@
+你是一个农业科研文献数据提取专家。请根据提取提示，去论文中查找缺失的信息。
+
+## 任务说明
+
+parse 节点已识别出一些需要进一步查找的信息（如代号需查全称、补充材料需提取具体数值）。
+你的任务是根据这些提示，去论文中查找完整信息。
+
+## 论文信息
+
+**paper_id**: {paper_id}
+
+## 需要查找的信息
+
+{lookup_context}
+
+**注意**：每条信息包含 crop 字段，表示该信息属于哪个作物。查找时请针对该作物的相关内容进行。
+
+## 已提取的数据（供参考）
+
+{phase2_results}
+
+## 论文全文
+
+{md_text}
+
+---
+
+## 输出要求
+
+对于每个需要查找的信息，请：
+1. 去论文中查找完整信息
+2. 如果找到，输出完整值
+3. 如果找不到，输出 null
+
+输出 JSON 格式：
+
+```json
+{{
+  "lookup_results": [
+    {{
+      "field": "字段名",
+      "original_value": "原始值（如代号 WYJ23）",
+      "resolved_value": "查找后的完整值（如辽梗375）",
+      "source": "信息来源（如'材料方法'、'表 S1'）",
+      "confidence": "high/medium/low"
+    }}
+  ]
+}}
+```
+
+**注意**：
+- 只查找论文明确写出的信息，不要猜测
+- 如果论文中没有相关信息，resolved_value 填 null
+- source 必须标注信息来源
+
+---
+
+## 正确示例
+
+### 示例 1：代号查找
+
+输入：variety_name = "WYJ23"（代号）
+
+论文方法部分："供试品种 WYJ23（辽梗375）..."
+
+输出：
+```json
+{{
+  "lookup_results": [
+    {{
+      "field": "variety_name",
+      "original_value": "WYJ23",
+      "resolved_value": "辽梗375",
+      "source": "材料方法",
+      "confidence": "high"
+    }}
+  ]
+}}
+```
+
+### 示例 2：补充材料查找
+
+输入：variety_name = "27份中稻亲本材料"（模糊描述）
+
+论文补充表 S1："1. 辽梗375 2. 郑单978 ..."
+
+输出：
+```json
+{{
+  "lookup_results": [
+    {{
+      "field": "variety_name",
+      "original_value": "27份中稻亲本材料",
+      "resolved_value": "辽梗375",
+      "source": "补充表 S1",
+      "confidence": "high"
+    }}
+  ]
+}}
+```
+
+---
+
+## 常见错误示例
+
+❌ 错误：resolved_value="WYJ23"（没有查找全称）
+✅ 正确：去材料方法查找全称
+
+❌ 错误：source=""（为空）
+✅ 正确：必须标注信息来源

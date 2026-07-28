@@ -1,0 +1,190 @@
+你是一个农业科研文献理解专家。请阅读论文内容，输出结构化的上下文信息。
+
+## 论文信息
+
+**策略**: {strategy}
+{chunk_info}
+
+## 标题大纲
+{tree_outline}
+
+## 摘要
+{abstract_text}
+
+## 方法
+{methods_text}
+
+## 论文正文
+{md_text}
+
+---
+
+## 输出要求
+
+请输出 JSON 格式，包含两个部分：
+
+### 1. doc_context（文档上下文）
+- `crops`: 论文中包含的作物列表（如 ["水稻 / Rice", "玉米 / Maize"]）
+- `study_count`: 论文中包含的试验数量（整数）
+- `chunks`: chunk 列表（每个 chunk 包含 id、type、title）
+- `has_supplementary`: 是否有补充材料（布尔值）
+- `table_refs`: 表格引用列表（如 ["表 S1", "表 S2"]）
+- `data_file_link`: 数据文件链接（如有）
+- `data_file_description`: 数据文件格式说明（如有）
+- `variety_groups`: 品种分组（共用/特有），见下方说明
+
+### 2. extraction_hints（提取提示）
+每个提示包含：
+- `crop`: 该字段属于哪个作物（如 "水稻 / Rice"）
+- `field`: 字段名（如 "variety_name"、"yield_value"、"location" 等）
+- `value`: 字段值（原文中的文本）
+- `context`: 上下文片段（包含该字段的原文段落，50-200 字）
+- `action`: 后续处理方式
+  - `ok`: 信息完整，可直接复用
+  - `needs_lookup`: 需要去其他位置查找（如材料方法、补充表）
+  - `verify`: 信息不足或模糊，需核实
+- `reason`: 判断原因
+- `shared_across_studies`: 是否跨试验共用（布尔值，可选）
+- `source_tables`: 该品种出现的表格列表（如 ["表3-1", "表4-1"]，可选）
+
+---
+
+## 注意事项
+
+1. 作物识别范围：
+   - 识别论文中研究的所有作物（如水稻、玉米、小麦等）
+   - 如果论文研究多种作物，crops 列表包含所有作物
+
+2. 字段识别范围（不仅限于品种名）：
+   - variety_name: 品种名（必须关联到具体作物）
+   - yield_value: 产量值（必须关联到具体作物）
+   - location: 试验地点
+   - trial_year: 试验年份
+   - plot_size: 小区面积
+   - 其他论文中明确写出的字段
+
+3. action 判断规则：
+   - `ok`: 具体名称/数值，如"辽梗375"、"612.5 kg/ha"
+   - `needs_lookup`: 代号、引用、模糊数量，如"WYJ23"、"详见表 S1"、"27份材料"
+   - `verify`: 信息不明确，如"未知品种"、"约 X 产量"
+
+4. 补充材料：
+   - 如果提到"补充材料"、"附件"、"表 S1"等 → has_supplementary = true
+
+5. 只提取论文明确写出的信息，不要猜测。
+
+6. 品种共用识别（重要）：
+   - 识别论文中的对照品种（CK），CK 通常是多个试验共用的
+   - 如果某个品种在多个试验/表格中出现，标记 `shared_across_studies: true`
+   - 在 `variety_groups` 中记录共用品种列表
+   - 示例：论文有 3 个试验，都用"虾稻一号"作为 CK，则：
+     ```json
+     "variety_groups": [
+       {{
+         "group_name": "对照",
+         "shared_across_studies": true,
+         "varieties": [
+           {{"name": "虾稻一号", "is_check": true, "source_tables": ["表3-1", "表4-1", "表5-1"]}}
+         ]
+       }}
+     ]
+     ```
+
+---
+
+## 正确示例
+
+### 示例 1：多作物论文
+
+论文原文："本研究比较了水稻品种辽梗375和玉米品种郑单978的产量表现"
+
+输出：
+```json
+{{
+  "doc_context": {{
+    "crops": ["水稻 / Rice", "玉米 / Maize"],
+    "study_count": 2
+  }},
+  "extraction_hints": [
+    {{
+      "crop": "水稻 / Rice",
+      "field": "variety_name",
+      "value": "辽梗375",
+      "context": "本研究比较了水稻品种辽梗375和玉米品种郑单978的产量表现",
+      "action": "ok",
+      "reason": "具体品种名称"
+    }},
+    {{
+      "crop": "玉米 / Maize",
+      "field": "variety_name",
+      "value": "郑单978",
+      "context": "本研究比较了水稻品种辽梗375和玉米品种郑单978的产量表现",
+      "action": "ok",
+      "reason": "具体品种名称"
+    }}
+  ]
+}}
+```
+
+### 示例 2：模糊描述
+
+论文原文："27份中稻亲本材料"
+
+输出：
+```json
+{{
+  "crop": "水稻 / Rice",
+  "field": "variety_name",
+  "value": "27份中稻亲本材料",
+  "context": "27份中稻亲本材料",
+  "action": "needs_lookup",
+  "reason": "模糊数量，需查补充表获取具体名称"
+}}
+```
+
+---
+
+## 常见错误示例
+
+❌ 错误：crops 只返回单一作物 "水稻 / Rice"，但论文还研究了玉米
+✅ 正确：crops 返回 ["水稻 / Rice", "玉米 / Maize"]
+
+❌ 错误：hint 没有 crop 字段
+✅ 正确：每个 hint 都有 crop 字段，标识属于哪个作物
+
+❌ 错误：把"1950-60s品种"识别为具体品种名，action="ok"
+✅ 正确：识别为模糊描述，action="verify"，reason="年代描述，非具体品种"
+
+❌ 错误：把"WYJ23"识别为具体品种名，action="ok"
+✅ 正确：识别为代号，action="needs_lookup"，reason="代号，需查材料方法确认全称"
+
+❌ 错误：遗漏表格引用
+✅ 正确：识别"详见表 S1"，加入 table_refs
+
+---
+
+请输出 JSON：
+
+```json
+{{
+  "doc_context": {{
+    "crops": ["水稻 / Rice", "玉米 / Maize"],
+    "study_count": 0,
+    "chunks": [...],
+    "has_supplementary": false,
+    "table_refs": [],
+    "data_file_link": null,
+    "data_file_description": null
+  }},
+  "extraction_hints": [
+    {{
+      "crop": "水稻 / Rice",
+      "field": "variety_name",
+      "value": "WYJ23",
+      "context": "供试品种为 WYJ23、辽梗375、郑单978...",
+      "action": "needs_lookup",
+      "reason": "代号，需查材料方法确认全称"
+    }}
+  ]
+}}
+```

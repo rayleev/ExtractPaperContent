@@ -18,6 +18,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
+from src.core.constants import _SECTION_KEYWORDS, _PRUNE_KEYWORDS, _REVIEW_KEYWORDS, _INTRO_TITLES
+
 logger = logging.getLogger("paper_extractor")
 
 
@@ -98,7 +100,7 @@ def collect_content(node: SectionNode, max_chars: int = 0) -> str:
     """
     按文档顺序收集节点及其所有子孙的完整内容。
 
-    每个章节输出格式: ### 标题\\n正文（含表格）
+    每个章节输出格式: ### 标题\n正文（含表格）
     """
     parts: List[str] = []
 
@@ -259,47 +261,6 @@ def build_extraction_context(chunks: Dict[str, str], max_chars: int = 60000) -> 
 #  内部实现
 # ═══════════════════════════════════════════════════════════════
 
-# ── 关键词映射 ──────────────────────────────────────────────
-
-_SECTION_KEYWORDS = {
-    "abstract": [
-        r"摘\s*要", r"abstract", r"summary",
-    ],
-    "methods": [
-        r"材料[与和]方法", r"试验[与和]方法", r"试验设计", r"材料与方法",
-        r"研究方法", r"试验方案", r"田间试验", r"试验材料",
-        r"测定项目", r"测定内容", r"测定指标",
-        r"materials?\s*(and|&)\s*methods?", r"experimental\s*design",
-        r"study\s*area", r"field\s*experiment",
-    ],
-    "results": [
-        r"结\s*果", r"结果[与和]分析", r"试验结果", r"产量[表分]",
-        r"产量性状", r"农艺性状", r"品种比较", r"产质量",
-        r"品种表现", r"性状分析", r"生育特性",
-        r"results?", r"yield\s*analysis", r"experimental\s*results",
-    ],
-    "discussion": [
-        r"讨\s*论", r"结论", r"结论[与和]讨论", r"小结",
-        r"discussion", r"conclusion",
-    ],
-}
-
-_PRUNE_KEYWORDS = [
-    r"参\s*考\s*文\s*献", r"references?", r"bibliography",
-    r"致\s*谢", r"acknowledgment",
-    r"作者简介", r"作者[简简]历",
-    r"独创性声明", r"声明",
-    r"关于论文使用授权",
-    r"目\s*录", r"table\s*of\s*contents?",
-    r"附\s*录", r"appendix",
-    r"答辩委员会",
-]
-
-_REVIEW_KEYWORDS = [
-    r"文献综述", r"研究进展", r"研究概况", r"综述",
-    r"literature\s*review", r"review\s*of",
-]
-
 # ── 标题层级检测 ──────────────────────────────────────────────
 
 _HEADING_RE = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
@@ -310,6 +271,7 @@ _NUMBERED_RE = re.compile(r'^(\d+(?:\.\d+)+)\s')
 # Single number followed by text (e.g., "1 Introduction", "2 Methods")
 _SINGLE_NUM_RE = re.compile(r'^(\d+)\s+(.+)')
 
+# ── 标题层级检测 ──────────────────────────────────────────────
 
 def _detect_level(heading_text: str, hash_count: int) -> int:
     """
@@ -403,9 +365,6 @@ def _build_tree_from_flat(flat_nodes: List[_FlatNode]) -> SectionNode:
 
 # ── 引言展平 ──────────────────────────────────────────────────
 
-_INTRO_TITLES = {"引言", "前言", "引 言"}
-
-
 def _flatten_introductions(node: SectionNode):
     """
     展平"引言"节点：将其子节点重新归属到正确的章节标题下。
@@ -422,9 +381,7 @@ def _flatten_introductions(node: SectionNode):
         if child.title.strip() in _INTRO_TITLES and child.children:
             # 如果引言有自己的正文内容，保留为一个叶子节点
             if child.content.strip():
-                intro_leaf = SectionNode(
-                    level=child.level, title=child.title, content=child.content
-                )
+                intro_leaf = SectionNode(level=child.level, title=child.title, content=child.content)
                 new_children.append(intro_leaf)
 
             # 尝试找到前面最近的同级章节标题（非引言、非空内容）

@@ -1,21 +1,25 @@
 """
-解析节点 — 获取论文 Markdown 全文并构建文档树。
+解析节点 — 获取论文 Markdown 全文、构建文档树、理解论文内容。
 
 优先级：
-  1. docs/ 下预置的 MD 文件
-  2. output/parsed/ 下已有的解析结果（按标题模糊匹配）
-  3. MinerU OCR 解析 PDF
+  1. download 时下载的 MD 文件（md_path）
+  2. MinerU OCR 解析 PDF
+
+LLM 理解策略（根据论文长度自动选择）：
+  - 短论文（< 上下文窗口 50%）：一次性给全文
+  - 长论文 + 有章节标题：分段理解 + 合并
+  - 长论文 + 无章节标题：滑动窗口 + 合并
 """
 
 from __future__ import annotations
 import logging
-import re
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
 from src.config import AppConfig
 from src.clients.mineru import MinerUClient
+from src.clients.llm import LLMClient
 from src.core.chunker import (
     build_document_tree,
     get_section_outline,
@@ -25,52 +29,215 @@ from src.graph.state import PaperState
 
 logger = logging.getLogger("paper_extractor")
 
+PROMPT_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
+
+
+def _understand_document_full_text(
+    md_text: str,
+    tree_outline: str,
+    abstract_text: str,
+    methods_text: str,
+    llm: LLMClient,
+) -> Optional[dict]:
+    """一次性给全文，LLM 理解（适用于短论文）。"""
+    prompt_template = (PROMPT_DIR / "parse_understanding.txt").read_text(encoding="utf-8")
+
+    prompt = prompt_template.format(
+        md_text=md_text,
+        tree_outline=tree_outline,
+        abstract_text=abstract_text,
+        methods_text=methods_text,
+        strategy="full_text",
+        chunk_info="",
+    )
+    return llm.call_json(prompt, max_tokens=4000)
+
+
+def _understand_document_chunked(
+    md_text: str,
+    tree_outline: str,
+    abstract_text: str,
+    methods_text: str,
+    llm: LLMClient,
+) -> Optional[dict]:
+    """分段理解 + 合并（适用于长论文 + 有章节标题）。"""
+    prompt_template = (PROMPT_DIR / "parse_understanding.txt").read_text(encoding="utf-8")
+
+    # 分段：按章节切分（简化实现：按长度切分，每段约 8000 字符）
+    chunks = _split_into_chunks(md_text, max_length=8000)
+
+    partial_results = []
+    for i, chunk in enumerate(chunks):
+        prompt = prompt_template.format(
+            md_text=chunk,
+            tree_outline=tree_outline,
+            abstract_text=abstract_text,
+            methods_text=methods_text,
+            strategy="chunked",
+            chunk_info=f"第 {i+1}/{len(chunks)} 段",
+        )
+        partial = llm.call_json(prompt, max_tokens=2000)
+        if partial:
+            partial_results.append(partial)
+
+    if not partial_results:
+        return None
+
+    # 合并所有分段理解
+    merge_template = (PROMPT_DIR / "parse_merge.txt").read_text(encoding="utf-8")
+    merge_prompt = merge_template.format(
+        partial_results=partial_results,
+        tree_outline=tree_outline,
+    )
+    return llm.call_json(merge_prompt, max_tokens=4000)
+
+
+def _understand_document_sliding_window(
+    md_text: str,
+    tree_outline: str,
+    abstract_text: str,
+    methods_text: str,
+    llm: LLMClient,
+    config: 'src.config.ParseConfig',
+) -> Optional[dict]:
+    """滑动窗口 + 合并（适用于长论文 + 无章节标题）。"""
+    prompt_template = (PROMPT_DIR / "parse_understanding.txt").read_text(encoding="utf-8")
+
+    chunks = _sliding_window(md_text, config.sliding_window_size, config.sliding_window_step)
+
+    partial_results = []
+    for i, (chunk, start_pos) in enumerate(chunks):
+        prompt = prompt_template.format(
+            md_text=chunk,
+            tree_outline=tree_outline,
+            abstract_text=abstract_text,
+            methods_text=methods_text,
+            strategy="sliding_window",
+            chunk_info=f"窗口 {i+1}（起始位置 {start_pos}）",
+        )
+        partial = llm.call_json(prompt, max_tokens=2000)
+        if partial:
+            partial_results.append(partial)
+
+    if not partial_results:
+        return None
+
+    # 合并
+    merge_template = (PROMPT_DIR / "parse_merge.txt").read_text(encoding="utf-8")
+    merge_prompt = merge_template.format(
+        partial_results=partial_results,
+        tree_outline=tree_outline,
+    )
+    return llm.call_json(merge_prompt, max_tokens=4000)
+
+
+def _split_into_chunks(text: str, max_length: int = 8000) -> list[str]:
+    """按长度切分文本（简化实现）。"""
+    if len(text) <= max_length:
+        return [text]
+
+    chunks = []
+    for i in range(0, len(text), max_length):
+        chunks.append(text[i:i + max_length])
+    return chunks
+
+
+def _sliding_window(text: str, window_size: int, step: int) -> list[tuple[str, int]]:
+    """滑动窗口切分文本，返回 (chunk, start_pos) 列表。"""
+    if len(text) <= window_size:
+        return [(text, 0)]
+
+    chunks = []
+    for i in range(0, len(text), step):
+        chunks.append((text[i:i + window_size], i))
+        if i + window_size >= len(text):
+            break
+    return chunks
+
+
+def _understand_document(
+    md_text: str,
+    tree_outline: str,
+    abstract_text: str,
+    methods_text: str,
+    llm: LLMClient,
+    config: 'src.config.ParseConfig',
+) -> Optional[dict]:
+    """
+    根据论文长度选择策略，调用 LLM 理解论文。
+
+    Returns:
+        {"doc_context": {...}, "entity_index": [...], "evidence_nodes": [...]}
+        或 None（LLM 调用失败时）
+    """
+    # 估算 token 数（中文约 1.5 char/token）
+    estimated_tokens = len(md_text) / 1.5
+    threshold_tokens = config.context_window * config.full_text_threshold
+
+    if estimated_tokens < threshold_tokens:
+        # 短论文：一次性给全文
+        logger.info(f"    Using full-text strategy (est. {estimated_tokens:.0f} tokens)")
+        return _understand_document_full_text(
+            md_text, tree_outline, abstract_text, methods_text, llm
+        )
+
+    # 长论文：检查是否有章节标题
+    has_structure = tree_outline and tree_outline != "(无章节标题)"
+
+    if has_structure:
+        # 有标题：分段理解
+        if config.chunked_enabled:
+            logger.info(f"    Using chunked strategy (est. {estimated_tokens:.0f} tokens)")
+            return _understand_document_chunked(
+                md_text, tree_outline, abstract_text, methods_text, llm
+            )
+        else:
+            logger.info(f"    Chunked strategy disabled, falling back to full-text")
+
+    # 无标题：滑动窗口
+    if config.sliding_window_enabled:
+        logger.info(f"    Using sliding-window strategy (est. {estimated_tokens:.0f} tokens)")
+        return _understand_document_sliding_window(
+            md_text, tree_outline, abstract_text, methods_text, llm, config
+        )
+    else:
+        logger.info(f"    Sliding-window strategy disabled, falling back to full-text")
+
+    # 兜底：一次性给全文（可能超上下文，但总比失败好）
+    return _understand_document_full_text(
+        md_text, tree_outline, abstract_text, methods_text, llm
+    )
+
 
 def parse_node(
     state: PaperState,
     config: AppConfig,
     mineru_client: Optional[MinerUClient],
+    llm: Optional[LLMClient] = None,
 ) -> dict:
     """
-    解析节点：获取论文全文并构建文档树。
+    解析节点：获取论文全文、构建文档树、理解论文内容。
 
-    返回 parsed_text（MD 全文）、tree_outline（标题大纲）、
-    abstract_text（摘要）、methods_text（方法部分）。
+    返回：
+      - parsed_text（MD 全文）
+      - tree_outline（标题大纲）
+      - abstract_text（摘要）
+      - methods_text（方法部分）
+      - doc_context（Document Context：作物、study 数、chunk 列表等）
+      - extraction_hints（提取提示：字段位置、查找需求）
     """
     paper_meta = state["paper_meta"]
     pid = state["paper_id"]
     md_text = None
 
-    # ── 优先级 1: docs/ 下预置的 MD 文件 ──
+    # ── 优先级 1: download 时下载的 MD ──
     md_path = paper_meta.get("md_path")
     if md_path and Path(md_path).exists():
         with open(md_path, "r", encoding="utf-8") as f:
             md_text = f.read()
         logger.info(f"  [{pid[:25]}] Read MD: {Path(md_path).name}")
 
-    # ── 优先级 2: 已有解析结果（按标题子串匹配）──
-    if not md_text:
-        title = paper_meta.get("title", "")
-        if title:
-            title_norm = re.sub(r'\s+', '', title)
-            parsed_dir = config.parsed_path
-            if parsed_dir.exists():
-                for md_file in parsed_dir.glob("*.md"):
-                    if "_chunks" in md_file.stem:
-                        continue
-                    try:
-                        with open(md_file, "r", encoding="utf-8") as f:
-                            head = f.read(2000)
-                        head_norm = re.sub(r'\s+', '', head)
-                        if len(title_norm) >= 5 and title_norm in head_norm:
-                            with open(md_file, "r", encoding="utf-8") as f:
-                                md_text = f.read()
-                            logger.info(f"  [{pid[:25]}] Reused MD: {md_file.name}")
-                            break
-                    except Exception:
-                        pass
-
-    # ── 优先级 3: MinerU 解析 PDF ──
+    # ── 优先级 2: MinerU 解析 PDF ──
     if not md_text and mineru_client:
         pdf_path = paper_meta.get("pdf_path")
         if pdf_path and Path(pdf_path).exists():
@@ -78,8 +245,7 @@ def parse_node(
             md_text = mineru_client.parse_pdf(Path(pdf_path))
             if md_text:
                 # 保存到 parsed 目录供后续复用
-                safe_name = pid.replace("/", "_").replace(":", "_").replace("\\", "_")
-                save_path = config.parsed_path / f"{safe_name}.md"
+                save_path = config.parsed_path / f"{pid}.md"
                 save_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(save_path, "w", encoding="utf-8") as f:
                     f.write(md_text)
@@ -113,10 +279,36 @@ def parse_node(
         n.content.strip() for n in methods_nodes if n.content.strip()
     ) or "(方法部分未识别)"
 
+    # ── LLM 理解论文内容 ──
+    doc_context = {}
+    extraction_hints = []
+    needs_lookup = False
+
+    if llm:
+        understanding = _understand_document(
+            md_text, outline, abstract_text, methods_text, llm, config.parse
+        )
+        if understanding:
+            doc_context = understanding.get("doc_context", {})
+            extraction_hints = understanding.get("extraction_hints", [])
+            # 根据 extraction_hints 判断是否需要 lookup phase
+            needs_lookup = any(h.get("action") == "needs_lookup" for h in extraction_hints)
+            logger.info(f"  [{pid[:25]}] Document understood: {doc_context.get('crop', '?')}, "
+                       f"{doc_context.get('study_count', '?')} studies, "
+                       f"{len(extraction_hints)} hints, "
+                       f"needs_lookup={needs_lookup}")
+        else:
+            logger.warning(f"  [{pid[:25]}] LLM understanding failed")
+    else:
+        logger.warning(f"  [{pid[:25]}] LLM client not available, skipping understanding")
+
     return {
         "parsed_text": md_text,
         "tree_outline": outline,
         "abstract_text": abstract_text[:5000],
         "methods_text": methods_text[:15000],
+        "doc_context": doc_context,
+        "extraction_hints": extraction_hints,
+        "needs_lookup": needs_lookup,
         "status": "parsed",
     }

@@ -1,0 +1,109 @@
+你是一个农业科研文献数据验证专家。请批量验证以下字段的证据是否正确。
+
+## 字段列表
+
+{fields_json}
+
+## 候选证据（来自 parse 节点）
+
+{candidates_json}
+
+## 论文全文
+
+{parsed_text}
+
+---
+
+## 验证要求
+
+对每个字段：
+1. 检查候选证据是否正确支持字段值
+2. 如果候选证据正确，确认该证据
+3. 如果候选证据错误或缺失，从论文中找到正确的证据
+4. 给出具体的论文位置和原文片段
+
+## 输出格式
+
+```json
+{{
+  "evidence_nodes": [
+    {{
+      "field": "字段名",
+      "value": "字段值",
+      "source_location": "来源位置（如'摘要'、'表3'、'3.2.3节'）",
+      "source_text": "原文片段（50-200字）",
+      "confidence": "high/medium/low",
+      "verified": true/false,
+      "reason": "判断原因（如'候选证据正确'、'候选证据位置错误，已纠正'）"
+    }}
+  ]
+}}
+```
+
+## 注意事项
+
+- 只验证论文明确写出的信息，不要猜测
+- source_text 必须是论文中的原文片段
+- confidence 表示证据的可靠程度：high=直接引用，medium=推断，low=不确定
+- verified 表示证据是否通过验证
+
+---
+
+## 正确示例
+
+### 示例 1：候选证据正确
+
+字段：variety_name = "辽梗375"
+候选证据：原文 "供试品种为辽梗375、郑单978"
+
+输出：
+```json
+{{
+  "evidence_nodes": [
+    {{
+      "field": "variety_name",
+      "value": "辽梗375",
+      "source_location": "材料方法",
+      "source_text": "供试品种为辽梗375、郑单978",
+      "confidence": "high",
+      "verified": true,
+      "reason": "候选证据正确"
+    }}
+  ]
+}}
+```
+
+### 示例 2：候选证据错误，LLM 纠正
+
+字段：variety_name = "辽梗375"
+候选证据：原文 "供试品种为郑单978"（错误）
+
+输出：
+```json
+{{
+  "evidence_nodes": [
+    {{
+      "field": "variety_name",
+      "value": "辽梗375",
+      "source_location": "表3",
+      "source_text": "辽梗375 612.5 kg/亩",
+      "confidence": "high",
+      "verified": true,
+      "reason": "候选证据错误，已从表3找到正确证据"
+    }}
+  ]
+}}
+```
+
+---
+
+## 常见错误示例
+
+❌ 错误：source_text 是自己总结的，不是原文
+✅ 正确：source_text 必须是论文中的原文片段
+
+❌ 错误：source_location="论文"（太模糊）
+✅ 正确：source_location="表3" 或 "材料方法"（具体位置）
+
+❌ 错误：verified=true，但 source_text 与 value 不匹配
+✅ 正确：verified 必须基于 source_text 与 value 的一致性
