@@ -78,14 +78,14 @@ class StopResponse(BaseModel):
 
 class TableStats(BaseModel):
     """数据库表统计信息。"""
-    papers: int = 0
-    studies: int = 0
-    varieties: int = 0
+    pe_core_papers: int = 0
+    pe_core_studies: int = 0
+    pe_core_varieties: int = 0
     varieties_flat: int = 0
-    classification: int = 0
-    validation_issues: int = 0
-    paper_status: int = 0
-    pdf_missing: int = 0
+    pe_aud_classification: int = 0
+    pe_aud_validation_issues: int = 0
+    pe_reg_paper_status: int = 0
+    pe_log_pdf_missing: int = 0
 
 
 class PaperStatusResponse(BaseModel):
