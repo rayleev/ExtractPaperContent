@@ -342,9 +342,9 @@ async function loadStats() {
     const r = await fetch(BASE + '/api/stats');
     const d = await r.json();
     const labels = {
-      papers: 'Papers', studies: 'Studies', varieties: 'Varieties',
-      varieties_flat: 'Varieties Flat', classification: 'Classification',
-      validation_issues: 'Validation', paper_status: 'Paper Status', pdf_missing: 'PDF Missing'
+      pe_core_papers: 'Papers', pe_core_studies: 'Studies', pe_core_varieties: 'Varieties',
+      varieties_flat: 'Varieties Flat', pe_aud_classification: 'Classification',
+      pe_aud_validation_issues: 'Validation', pe_reg_paper_status: 'Paper Status', pe_log_pdf_missing: 'PDF Missing'
     };
     document.getElementById('statsCards').innerHTML = Object.entries(labels).map(([k, label]) =>
       `<div class="card"><h3>${label}</h3><div class="value">${fmt(d[k])}</div></div>`
