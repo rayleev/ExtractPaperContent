@@ -23,8 +23,11 @@ COPY src/ src/
 COPY run.py .
 COPY config.yaml.example .
 
-# 创建数据目录
-RUN mkdir -p docs/meta docs/PDF cache output/parsed output/runs
+# 创建数据目录并授权给 uid 1000（与下方 USER 一致）
+# output/runs 未被 docker-compose 挂载，是容器内目录；
+# 若属主留在 root，uid 1000 进程无法在其下创建 run 子目录（Permission denied）
+RUN mkdir -p docs/meta docs/PDF cache output/parsed output/runs && \
+    chown -R 1000:1000 docs cache output
 
 # 环境变量默认值
 ENV PYTHONUNBUFFERED=1
