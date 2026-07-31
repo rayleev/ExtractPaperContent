@@ -40,8 +40,10 @@ steps:
         echo "$ENV_FILE" > .env
         echo ".env 已写入"
 
-        # ── 2. 确保 infra 网络存在 ──
+        # ── 2. 确保网络存在（docker-compose.yml 中两个网络都是 external）──
         docker network inspect infra >/dev/null 2>&1 || docker network create infra
+        docker network inspect paper-extractor-net >/dev/null 2>&1 || docker network create paper-extractor-net
+        echo "网络已就绪"
 
         # ── 3. 记录旧镜像（用于回滚）──
         # 用 if 语句而非 || 兜底，避免 set -e 模式下提前退出
@@ -59,8 +61,17 @@ steps:
         docker rm -f extractor-1 extractor-2 extractor-3 2>/dev/null || true
         echo "旧容器已停止"
 
-        # ── 5. 启动服务 ──
-        docker compose up -d --build
+        # ── 5. 启动服务（失败时执行回滚，不被 set -e 提前退出）──
+        if ! docker compose up -d --build; then
+          echo "✗ docker compose up 失败，执行回滚..."
+          if [ -n "$OLD_IMAGE" ]; then
+            IMAGE_TAG="$OLD_IMAGE" docker compose up -d --no-build
+            echo "已回滚到旧镜像: $OLD_IMAGE"
+          else
+            echo "无旧镜像可回滚"
+          fi
+          exit 1
+        fi
         echo "服务已启动"
 
         # ── 6. 健康检查（最多 60s）──
