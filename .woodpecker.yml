@@ -80,10 +80,11 @@ steps:
 
         # ── 5. 启动服务（失败时执行回滚，不被 set -e 提前退出）──
         # docker-compose.yml 使用绝对路径挂载，工作目录不影响挂载路径
-        if ! docker compose up -d --build; then
+        # --env-file 指定 .env 路径用于 yml 变量替换（${VAR}），与 services.env_file 不同
+        if ! docker compose --env-file "$DEPLOY_DIR/.env" up -d --build; then
           echo "✗ docker compose up 失败，执行回滚..."
           if [ -n "$OLD_IMAGE" ]; then
-            IMAGE_TAG="$OLD_IMAGE" docker compose up -d --no-build
+            IMAGE_TAG="$OLD_IMAGE" docker compose --env-file "$DEPLOY_DIR/.env" up -d --no-build
             echo "已回滚到旧镜像: $OLD_IMAGE"
           else
             echo "无旧镜像可回滚"
@@ -116,7 +117,7 @@ steps:
         docker stop extractor-1 extractor-2 extractor-3 2>/dev/null || true
         docker rm -f extractor-1 extractor-2 extractor-3 2>/dev/null || true
         if [ -n "$OLD_IMAGE" ]; then
-          IMAGE_TAG="$OLD_IMAGE" docker compose up -d --no-build
+          IMAGE_TAG="$OLD_IMAGE" docker compose --env-file "$DEPLOY_DIR/.env" up -d --no-build
           echo "已回滚到旧镜像: $OLD_IMAGE"
         else
           echo "无旧镜像可回滚"
