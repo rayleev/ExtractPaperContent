@@ -25,6 +25,8 @@ config.yaml
 docs/*.pdf
 /docs/
 ETL/
+AGENTS.md
+CLAUDE.md
 
 # IDE
 .vscode/

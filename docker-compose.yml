@@ -2,27 +2,29 @@
 #  Paper Extractor — 多实例 Docker Compose 部署
 #
 #  3 个 extractor 实例共享：
-#    - PostgreSQL 数据库（外部，地址通过 DB_HOST 配置）
+#    - PostgreSQL 数据库（通过 infra 网络用容器名 postgres 访问）
 #    - 宿主机 bind mount 目录（docs/PDF、docs/meta、output/parsed），
 #      三容器挂载同一路径，避免重复下载，宿主机可直接管理文件
 #    - 各自的 LLM API Key（环境变量注入）
 #
 #  注意：每个实例有独立的 cache 目录（cache-1/2/3），
 #        避免多容器并发写同一个 SQLite checkpoint 文件导致锁冲突。
-#        geocoding_cache.json 各实例独立维护（73KB，低频更新）。
+#
+#  网络：
+#    infra            → 共享基础设施（postgres 等），external
+#    paper-extractor-net → 应用内部网络
 #
 #  必需环境变量（在 .env 文件中设置）：
-#    DB_HOST, DB_PASSWORD, SS_API_KEY
-#    LLM_API_KEY_1, LLM_API_KEY_2, LLM_API_KEY_3
+#    DB_HOST, DB_PASSWORD, LLM_API_KEY_1/2/3, MINERU_API_KEY_1/2/3
 #
-#  启动: docker-compose up -d
-#  日志: docker-compose logs -f
-#  停止: docker-compose down
+#  启动: docker compose up -d
+#  日志: docker compose logs -f
+#  停止: docker compose down
 # ============================================================
 
 x-common-env: &common-env
   TZ: Asia/Shanghai
-  DB_HOST: ${DB_HOST:?请在 .env 中设置 DB_HOST}
+  DB_HOST: ${DB_HOST:-postgres}
   DB_PASSWORD: ${DB_PASSWORD:?请在 .env 中设置 DB_PASSWORD}
   DB_PORT: ${DB_PORT:-5432}
   MINERU_BASE_URL: ${MINERU_BASE_URL:-}
@@ -45,7 +47,7 @@ services:
     container_name: extractor-1
     restart: unless-stopped
     ports:
-      - "${PORT_1:-8001}:8000"
+      - "${PORT_1:-8004}:8000"
     environment:
       <<: *common-env
       INSTANCE_ID: instance_1
@@ -62,7 +64,8 @@ services:
     env_file:
       - .env
     networks:
-      - extractor-net
+      - infra
+      - paper-extractor-net
 
   # ── 实例 2 ──
   extractor-2:
@@ -90,7 +93,8 @@ services:
     env_file:
       - .env
     networks:
-      - extractor-net
+      - infra
+      - paper-extractor-net
 
   # ── 实例 3 ──
   extractor-3:
@@ -118,9 +122,16 @@ services:
     env_file:
       - .env
     networks:
-      - extractor-net
+      - infra
+      - paper-extractor-net
 
 # ── 网络 ──
 networks:
-  extractor-net:
+  # 共享基础设施网络（由 docker-compose.infra.yml 创建）
+  infra:
+    external: true
+    name: infra
+  # paper-extractor 应用内部网络
+  paper-extractor-net:
     name: paper-extractor-net
+    driver: bridge

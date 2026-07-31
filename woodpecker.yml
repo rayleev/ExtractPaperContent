@@ -1,10 +1,20 @@
+# ============================================================
 # Woodpecker CI — Paper Extractor 流水线
-# 在网页上手动触发执行
-#
+# ============================================================
 # 流程: build → deploy（构建镜像 → 启动服务 → 健康检查 → 失败回滚）
 #
 # Woodpecker 会克隆仓库到工作目录，docker-compose.yml 已在仓库中。
 # 配置文件和环境变量通过 secrets 注入。
+#
+# 所需 Woodpecker secret（在仓库 Settings → Secrets 配置）:
+#   CONFIG_YAML  → 完整的 config.yaml 内容
+#   ENV_FILE     → 完整的 .env 内容
+#
+# 端口分配（宿主机:容器）:
+#   extractor-1  8004:8000
+#   extractor-2  8002:8000
+#   extractor-3  8003:8000
+# ============================================================
 
 steps:
   - name: build
@@ -21,36 +31,37 @@ steps:
         set -e
 
         # ── 1. 写入配置（从 secrets 注入）──
-        # Woodpecker 已克隆仓库，当前目录包含 docker-compose.yml
         echo "当前目录: $(pwd)"
         ls -la
 
-        # 写入 config.yaml
         echo "$CONFIG_YAML" > config.yaml
         echo "config.yaml 已写入"
 
-        # 写入 .env
         echo "$ENV_FILE" > .env
         echo ".env 已写入"
 
-        # ── 2. 记录旧镜像（用于回滚）──
+        # ── 2. 确保 infra 网络存在 ──
+        docker network inspect infra >/dev/null 2>&1 || docker network create infra
+
+        # ── 3. 记录旧镜像（用于回滚）──
         OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' extractor-1 2>/dev/null) || OLD_IMAGE=""
         echo "旧镜像: ${OLD_IMAGE:-无}"
 
-        # ── 3. 停止旧容器 ──
-        docker-compose down
+        # ── 4. 停止旧容器 ──
+        docker compose down
         echo "旧容器已停止"
 
-        # ── 4. 启动服务 ──
-        docker-compose up -d --build
+        # ── 5. 启动服务 ──
+        docker compose up -d --build
         echo "服务已启动"
 
-        # ── 5. 健康检查（最多 60s）──
+        # ── 6. 健康检查（最多 60s）──
+        # 容器名是 extractor-1/2/3，通过 paper-extractor-net 网络用容器名:8000 访问
         echo "等待服务就绪..."
         for i in $(seq 1 20); do
           HEALTHY=true
-          for port in 8001 8002 8003; do
-            if ! docker run --rm --network extractor-net curlimages/curl -fsS --max-time 2 http://extractor-$port:8000/health > /dev/null 2>&1; then
+          for idx in 1 2 3; do
+            if ! docker run --rm --network paper-extractor-net curlimages/curl -fsS --max-time 2 http://extractor-$idx:8000/health > /dev/null 2>&1; then
               HEALTHY=false
               break
             fi
@@ -63,11 +74,11 @@ steps:
           sleep 3
         done
 
-        # ── 6. 健康检查失败 → 回滚 ──
+        # ── 7. 健康检查失败 → 回滚 ──
         echo "✗ 新容器未就绪，执行回滚..."
-        docker-compose down
+        docker compose down
         if [ -n "$OLD_IMAGE" ]; then
-          IMAGE_TAG="$OLD_IMAGE" docker-compose up -d --no-build
+          IMAGE_TAG="$OLD_IMAGE" docker compose up -d --no-build
           echo "已回滚到旧镜像: $OLD_IMAGE"
         else
           echo "无旧镜像可回滚"
