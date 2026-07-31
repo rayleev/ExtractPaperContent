@@ -507,7 +507,8 @@ def insert_extraction(conn, result: dict, paper_id: str):
         # 只提对照组后 variety 行数减少，高 variety_index 的旧处理行会留下成脏数据）。
         # 故每次写入前按 paper_id 清空 pe_core_studies/pe_core_varieties/varieties_flat，再整篇插入。
         # pe_core_papers 表每个 paper_id 仅一行，直接 upsert 即可，无需删除。
-        for _table in ("pe_core_varieties", "varieties_flat", "pe_core_studies"):
+        # pe_aud_evidence 同样按 paper_id 清空，避免重跑时累积重复证据行。
+        for _table in ("pe_core_varieties", "varieties_flat", "pe_core_studies", "pe_aud_evidence"):
             cur.execute(f"DELETE FROM {_table} WHERE paper_id = %s", (paper_id,))
 
         # ── pe_core_papers 表 ──
@@ -719,12 +720,20 @@ def insert_classification(conn, records: List[dict]):
 
 
 def insert_validation(conn, results: List[dict]):
-    """将验证报告扁平化写入 pe_aud_validation_issues 表。"""
+    """将验证报告扁平化写入 pe_aud_validation_issues 表（按 paper_id 覆盖）。"""
     if not results:
         return
 
+    # 收集本批次涉及的 paper_id，仅按 paper_id 删除旧记录，避免误清其他论文的验证数据
+    paper_ids = [r.get("paper_id", "") for r in results if r.get("paper_id")]
+    if not paper_ids:
+        return
+
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM pe_aud_validation_issues")
+        cur.execute(
+            "DELETE FROM pe_aud_validation_issues WHERE paper_id = ANY(%s)",
+            (paper_ids,),
+        )
 
         row_count = 0
         for record in results:
