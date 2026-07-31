@@ -131,7 +131,7 @@ networks:
   infra:
     external: true
     name: infra
-  # paper-extractor 应用内部网络
+  # paper-extractor 应用内部网络（external：网络已存在，避免 compose 重复创建告警）
   paper-extractor-net:
+    external: true
     name: paper-extractor-net
-    driver: bridge

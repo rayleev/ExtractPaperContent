@@ -48,7 +48,10 @@ steps:
         echo "旧镜像: ${OLD_IMAGE:-无}"
 
         # ── 4. 停止旧容器 ──
-        docker compose down
+        # 不依赖 docker compose down（project name 不匹配时无法停止旧容器）
+        # 直接用 docker rm -f 按容器名删除，确保不残留
+        docker stop extractor-1 extractor-2 extractor-3 2>/dev/null || true
+        docker rm -f extractor-1 extractor-2 extractor-3 2>/dev/null || true
         echo "旧容器已停止"
 
         # ── 5. 启动服务 ──
@@ -76,7 +79,8 @@ steps:
 
         # ── 7. 健康检查失败 → 回滚 ──
         echo "✗ 新容器未就绪，执行回滚..."
-        docker compose down
+        docker stop extractor-1 extractor-2 extractor-3 2>/dev/null || true
+        docker rm -f extractor-1 extractor-2 extractor-3 2>/dev/null || true
         if [ -n "$OLD_IMAGE" ]; then
           IMAGE_TAG="$OLD_IMAGE" docker compose up -d --no-build
           echo "已回滚到旧镜像: $OLD_IMAGE"
