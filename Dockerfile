@@ -30,6 +30,10 @@ RUN mkdir -p docs/meta docs/PDF cache output/parsed output/runs
 ENV PYTHONUNBUFFERED=1
 ENV INSTANCE_ID=default
 
+# 以非 root 用户运行（uid 1000 对应宿主机 root01）
+# 避免容器在 bind mount 目录下创建 root 属主的子目录
+USER 1000:1000
+
 # 暴露 API 端口
 EXPOSE 8000
 
