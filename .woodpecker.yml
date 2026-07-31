@@ -3,8 +3,12 @@
 # ============================================================
 # 流程: build → deploy（构建镜像 → 启动服务 → 健康检查 → 失败回滚）
 #
-# Woodpecker 会克隆仓库到工作目录，docker-compose.yml 已在仓库中。
-# 配置文件和环境变量通过 secrets 注入。
+# 配置/数据统一存放在 /home/root01/deploy/paper-extractor/ 下：
+#   config.yaml     → 由 CONFIG_YAML secret 写入
+#   .env            → 由 ENV_FILE secret 写入
+#   docs/PDF, docs/meta, output/parsed, output/logs, cache-1/2/3 → 运行时数据目录
+#
+# docker-compose.yml 使用绝对路径挂载，不依赖 woodpecker 临时工作区。
 #
 # 所需 Woodpecker secret（在仓库 Settings → Secrets 配置）:
 #   CONFIG_YAML  → 完整的 config.yaml 内容
@@ -30,15 +34,28 @@ steps:
       - |
         set -e
 
-        # ── 1. 写入配置（从 secrets 注入）──
-        echo "当前目录: $(pwd)"
-        ls -la
+        # ── 1. 写入配置到统一部署目录 ──
+        DEPLOY_DIR=/home/root01/deploy/paper-extractor
+        mkdir -p "$DEPLOY_DIR/docs/PDF" "$DEPLOY_DIR/docs/meta" \
+                 "$DEPLOY_DIR/output/parsed" "$DEPLOY_DIR/output/logs" \
+                 "$DEPLOY_DIR/cache-1" "$DEPLOY_DIR/cache-2" "$DEPLOY_DIR/cache-3"
 
-        echo "$CONFIG_YAML" > config.yaml
-        echo "config.yaml 已写入"
+        # 写入前先删除可能残留的同名目录（Docker bind mount 会把目录创建出来，echo 写入会失败）
+        rm -rf "$DEPLOY_DIR/config.yaml" "$DEPLOY_DIR/.env" 2>/dev/null || true
 
-        echo "$ENV_FILE" > .env
-        echo ".env 已写入"
+        echo "$CONFIG_YAML" > "$DEPLOY_DIR/config.yaml"
+        echo "$ENV_FILE" > "$DEPLOY_DIR/.env"
+
+        # 验证文件写入成功且非空（secret 未配置时变量为空，文件只有换行）
+        if [ ! -s "$DEPLOY_DIR/config.yaml" ]; then
+          echo "✗ CONFIG_YAML secret 为空或未配置，无法写入 config.yaml"
+          exit 1
+        fi
+        if [ ! -s "$DEPLOY_DIR/.env" ]; then
+          echo "✗ ENV_FILE secret 为空或未配置，无法写入 .env"
+          exit 1
+        fi
+        echo "config.yaml 和 .env 已写入 $DEPLOY_DIR 并验证"
 
         # ── 2. 确保网络存在（docker-compose.yml 中两个网络都是 external）──
         docker network inspect infra >/dev/null 2>&1 || docker network create infra
@@ -62,6 +79,7 @@ steps:
         echo "旧容器已停止"
 
         # ── 5. 启动服务（失败时执行回滚，不被 set -e 提前退出）──
+        # docker-compose.yml 使用绝对路径挂载，工作目录不影响挂载路径
         if ! docker compose up -d --build; then
           echo "✗ docker compose up 失败，执行回滚..."
           if [ -n "$OLD_IMAGE" ]; then
@@ -106,6 +124,7 @@ steps:
         exit 1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /home/root01/deploy:/home/root01/deploy
     environment:
       CONFIG_YAML:
         from_secret: CONFIG_YAML

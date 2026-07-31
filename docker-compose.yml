@@ -10,6 +10,10 @@
 #  注意：每个实例有独立的 cache 目录（cache-1/2/3），
 #        避免多容器并发写同一个 SQLite checkpoint 文件导致锁冲突。
 #
+#  部署/配置路径统一在 /home/root01/deploy/paper-extractor/ 下，
+#  由 .woodpecker.yml 在部署时创建并写入 config.yaml / .env。
+#  本 compose 文件使用绝对路径挂载，不依赖运行时工作目录。
+#
 #  网络：
 #    infra            → 共享基础设施（postgres 等），external
 #    paper-extractor-net → 应用内部网络
@@ -37,6 +41,9 @@ x-common-logging: &common-logging
     max-size: "50m"
     max-file: "5"
 
+# 统一部署根目录（绝对路径，避免依赖 woodpecker 临时工作区）
+# DEPLOY_DIR = /home/root01/deploy/paper-extractor
+
 services:
   # ── 实例 1 ──
   extractor-1:
@@ -54,15 +61,15 @@ services:
       LLM_API_KEY: ${LLM_API_KEY_1:?请在 .env 中设置 LLM_API_KEY_1}
       MINERU_API_KEY: ${MINERU_API_KEY_1:-}
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./docs/PDF:/app/docs/PDF
-      - ./docs/meta:/app/docs/meta
-      - ./output/parsed:/app/output/parsed
-      - ./output/logs:/app/output/logs
-      - ./cache-1:/app/cache
+      - /home/root01/deploy/paper-extractor/config.yaml:/app/config.yaml:ro
+      - /home/root01/deploy/paper-extractor/docs/PDF:/app/docs/PDF
+      - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
+      - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
+      - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/cache-1:/app/cache
     logging: *common-logging
     env_file:
-      - .env
+      - /home/root01/deploy/paper-extractor/.env
     networks:
       - infra
       - paper-extractor-net
@@ -83,15 +90,15 @@ services:
       LLM_API_KEY: ${LLM_API_KEY_2:?请在 .env 中设置 LLM_API_KEY_2}
       MINERU_API_KEY: ${MINERU_API_KEY_2:-}
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./docs/PDF:/app/docs/PDF
-      - ./docs/meta:/app/docs/meta
-      - ./output/parsed:/app/output/parsed
-      - ./output/logs:/app/output/logs
-      - ./cache-2:/app/cache
+      - /home/root01/deploy/paper-extractor/config.yaml:/app/config.yaml:ro
+      - /home/root01/deploy/paper-extractor/docs/PDF:/app/docs/PDF
+      - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
+      - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
+      - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/cache-2:/app/cache
     logging: *common-logging
     env_file:
-      - .env
+      - /home/root01/deploy/paper-extractor/.env
     networks:
       - infra
       - paper-extractor-net
@@ -112,15 +119,15 @@ services:
       LLM_API_KEY: ${LLM_API_KEY_3:?请在 .env 中设置 LLM_API_KEY_3}
       MINERU_API_KEY: ${MINERU_API_KEY_3:-}
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./docs/PDF:/app/docs/PDF
-      - ./docs/meta:/app/docs/meta
-      - ./output/parsed:/app/output/parsed
-      - ./output/logs:/app/output/logs
-      - ./cache-3:/app/cache
+      - /home/root01/deploy/paper-extractor/config.yaml:/app/config.yaml:ro
+      - /home/root01/deploy/paper-extractor/docs/PDF:/app/docs/PDF
+      - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
+      - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
+      - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/cache-3:/app/cache
     logging: *common-logging
     env_file:
-      - .env
+      - /home/root01/deploy/paper-extractor/.env
     networks:
       - infra
       - paper-extractor-net
