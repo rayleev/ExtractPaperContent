@@ -44,8 +44,13 @@ steps:
         docker network inspect infra >/dev/null 2>&1 || docker network create infra
 
         # ── 3. 记录旧镜像（用于回滚）──
-        OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' extractor-1 2>/dev/null) || OLD_IMAGE=""
-        echo "旧镜像: ${OLD_IMAGE:-无}"
+        # 用 if 语句而非 || 兜底，避免 set -e 模式下提前退出
+        if OLD_IMAGE=$(docker inspect --format='{{.Config.Image}}' extractor-1 2>/dev/null); then
+          echo "旧镜像: $OLD_IMAGE"
+        else
+          OLD_IMAGE=""
+          echo "旧镜像: 无"
+        fi
 
         # ── 4. 停止旧容器 ──
         # 不依赖 docker compose down（project name 不匹配时无法停止旧容器）
