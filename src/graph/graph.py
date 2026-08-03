@@ -74,7 +74,10 @@ def _should_stop(state: PaperState, node_name: str) -> bool:
 
 
 def _route_after_classify(state: PaperState) -> str:
-    """classify 后：检查 stop_after，否则进入 filter。"""
+    """classify 后：先检查是否失败，再检查 stop_after，否则进入 filter。"""
+    # classify 节点 LLM 调用失败时返回 status="failed"，提前终止避免被 filter 误判为 skipped
+    if state.get("status") == "failed":
+        return "fail"
     if _should_stop(state, "classify"):
         return "done"
     return "continue"
@@ -215,7 +218,7 @@ def build_paper_graph(
     graph.add_edge(START, "classify")
 
     graph.add_conditional_edges("classify", _route_after_classify,
-        {"continue": "filter", "done": END})
+        {"continue": "filter", "fail": END, "done": END})
 
     graph.add_conditional_edges("filter", _route_after_filter,
         {"download": "download", "skip": END, "done": END})

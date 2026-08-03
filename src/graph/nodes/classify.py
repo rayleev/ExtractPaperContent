@@ -72,7 +72,24 @@ def classify_node(state: PaperState, config: AppConfig, llm: LLMClient) -> dict:
 
     logger.info(f"  [{pid[:25]}] Classifying: {paper_meta.get('title', '')[:60]}")
     result = llm.call_json(prompt, max_tokens=1000)
-    classification = result or {"category": "unknown"}
+
+    # LLM 调用失败 → 标记为 error，让流程在此终止并入库为 failed
+    # （而非默认 unknown 进入 filter 被误判为 skipped，掩盖真实失败原因）
+    if not result:
+        logger.error(
+            f"  [{pid[:25]}] Classify LLM call failed (no result returned) — "
+            f"marking as error to avoid silent skip"
+        )
+        return {
+            "classification": {"paper_id": pid, "category": "unknown"},
+            "status": "failed",
+            "errors": [{
+                "node": "classify",
+                "error": "LLM 调用失败：分类节点未返回结果（可能是 API 限流/超时/JSON 解析失败），请检查 LLM 服务状态后重试",
+            }],
+        }
+
+    classification = result
     classification["paper_id"] = pid
 
     # 修正 research_country 判断（方案 B：规则修正）
@@ -84,8 +101,6 @@ def classify_node(state: PaperState, config: AppConfig, llm: LLMClient) -> dict:
         f"confidence={classification.get('confidence', '')}, "
         f"crops={classification.get('crops', [])}"
     )
-    if not result:
-        logger.warning(f"  [{pid[:25]}] LLM returned no result, defaulting to unknown")
 
     return {
         "classification": classification,
