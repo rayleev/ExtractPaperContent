@@ -74,7 +74,7 @@ def extract_phase2_node(
     else:
         category_instruction = ""
 
-    # 重新构建文档树以获取实际的实验章节节点
+    # 构建文档树（复用 parse 节点的树结构，仅作为内容来源）
     tree = build_document_tree(md_text)
     actual_exp_sections = find_experiment_sections(tree)
 
@@ -83,6 +83,18 @@ def extract_phase2_node(
         f"{len(studies)} from Phase 1, "
         f"{len(extraction_hints)} extraction hints"
     )
+
+    # ── Phase 1 优先逻辑 ──
+    # 当 Phase 1 成功识别 studies 时，以 Phase 1 的 studies 数量为准
+    # actual_exp_sections 仅作为内容来源，不再决定 study 数量
+    use_phase1_studies = len(studies) > 0
+    if use_phase1_studies:
+        logger.info(f"  [{pid[:25]}] Phase 2: using Phase 1 studies ({len(studies)}) as primary")
+    else:
+        logger.warning(
+            f"  [{pid[:25]}] Phase 2: no Phase 1 studies, "
+            f"falling back to document tree ({len(actual_exp_sections)} sections)"
+        )
 
     # 构建提取提示文本（含上下文片段）
     if extraction_hints:
@@ -132,59 +144,116 @@ def extract_phase2_node(
             shared_varieties_info = "\n\n## 共用品种（多个试验共用）\n" + "\n".join(shared_lines)
 
     phase2_results = []
-    for i, exp_node in enumerate(actual_exp_sections):
-        # 从 Phase 1 获取该试验的上下文
-        study_context = ""
-        if i < len(studies):
-            s = studies[i]
+
+    def _find_best_section_for_study(study_index: int, study_title: str) -> str:
+        """
+        为指定 study 找到最匹配的实验章节内容。
+        优先按 study_index 对应，否则按标题匹配。
+        """
+        # 优先按索引对应
+        if study_index < len(actual_exp_sections):
+            content = collect_content(actual_exp_sections[study_index])
+            return content
+        # 回退：按标题匹配
+        for sec in actual_exp_sections:
+            if study_title and study_title in sec.title:
+                return collect_content(sec)
+        # 最后回退：返回第一个 section 或全文
+        if actual_exp_sections:
+            return collect_content(actual_exp_sections[0])
+        return md_text[:config.extraction.max_text_chars]
+
+    if use_phase1_studies:
+        # ── 以 Phase 1 studies 为准 ──
+        for i, s in enumerate(studies):
             study_context = (
-                f"试验名称: {s.get('study_title', exp_node.title)}\n"
+                f"试验名称: {s.get('study_title', '')}\n"
                 f"试验年份: {s.get('trial_year', '')}\n"
                 f"试验地点: {s.get('site_administrative_region', '')}\n"
                 f"试验站: {s.get('experimental_site_name', '')}"
             )
-        else:
+
+            # 从文档树获取对应章节内容
+            section_content = _find_best_section_for_study(i, s.get("study_title", ""))
+            max_content = config.extraction.max_text_chars
+            if len(section_content) > max_content:
+                section_content = section_content[:max_content] + "\n\n[...TRUNCATED...]"
+
+            prompt = prompt_template.format(
+                paper_id=pid,
+                doi=paper_meta.get("doi", ""),
+                title=paper_meta.get("title", ""),
+                year=paper_meta.get("year", ""),
+                study_context=study_context + supplementary_info + shared_varieties_info,
+                section_content=section_content,
+                category_instruction=category_instruction,
+                extraction_hints=hints_text,
+            )
+
+            # LLM 调用
+            max_tokens = max(config.llm.max_tokens, 8192)
+            study_data = llm.call_json(prompt, max_tokens=max_tokens)
+
+            if study_data:
+                varieties = study_data.get("varieties", [])
+                phase2_results.append({
+                    "study_index": i,
+                    "varieties": varieties,
+                })
+                logger.info(
+                    f"  [{pid[:25]}] Study {i+1}: '{s.get('study_title', '')[:40]}' → "
+                    f"{len(varieties)} varieties"
+                )
+            else:
+                logger.warning(
+                    f"  [{pid[:25]}] Study {i+1}: '{s.get('study_title', '')[:40]}' → FAILED"
+                )
+                phase2_results.append({
+                    "study_index": i,
+                    "varieties": [],
+                })
+    else:
+        # ── Fallback: 使用文档树 ──
+        for i, exp_node in enumerate(actual_exp_sections):
             study_context = f"试验名称: {exp_node.title}"
 
-        # 收集章节内容（子节点递归收集）
-        section_content = collect_content(exp_node)
-        max_content = config.extraction.max_text_chars
-        if len(section_content) > max_content:
-            section_content = section_content[:max_content] + "\n\n[...TRUNCATED...]"
+            section_content = collect_content(exp_node)
+            max_content = config.extraction.max_text_chars
+            if len(section_content) > max_content:
+                section_content = section_content[:max_content] + "\n\n[...TRUNCATED...]"
 
-        prompt = prompt_template.format(
-            paper_id=pid,
-            doi=paper_meta.get("doi", ""),
-            title=paper_meta.get("title", ""),
-            year=paper_meta.get("year", ""),
-            study_context=study_context + supplementary_info + shared_varieties_info,
-            section_content=section_content,
-            category_instruction=category_instruction,
-            extraction_hints=hints_text,
-        )
-
-        # LLM 调用 — 这是主要耗时步骤
-        max_tokens = max(config.llm.max_tokens, 8192)
-        study_data = llm.call_json(prompt, max_tokens=max_tokens)
-
-        if study_data:
-            varieties = study_data.get("varieties", [])
-            phase2_results.append({
-                "study_index": i,
-                "varieties": varieties,
-            })
-            logger.info(
-                f"  [{pid[:25]}] Study {i+1}: '{exp_node.title[:40]}' → "
-                f"{len(varieties)} varieties"
+            prompt = prompt_template.format(
+                paper_id=pid,
+                doi=paper_meta.get("doi", ""),
+                title=paper_meta.get("title", ""),
+                year=paper_meta.get("year", ""),
+                study_context=study_context + supplementary_info + shared_varieties_info,
+                section_content=section_content,
+                category_instruction=category_instruction,
+                extraction_hints=hints_text,
             )
-        else:
-            logger.warning(
-                f"  [{pid[:25]}] Study {i+1}: '{exp_node.title[:40]}' → FAILED"
-            )
-            phase2_results.append({
-                "study_index": i,
-                "varieties": [],
-            })
+
+            max_tokens = max(config.llm.max_tokens, 8192)
+            study_data = llm.call_json(prompt, max_tokens=max_tokens)
+
+            if study_data:
+                varieties = study_data.get("varieties", [])
+                phase2_results.append({
+                    "study_index": i,
+                    "varieties": varieties,
+                })
+                logger.info(
+                    f"  [{pid[:25]}] Study {i+1}: '{exp_node.title[:40]}' → "
+                    f"{len(varieties)} varieties"
+                )
+            else:
+                logger.warning(
+                    f"  [{pid[:25]}] Study {i+1}: '{exp_node.title[:40]}' → FAILED"
+                )
+                phase2_results.append({
+                    "study_index": i,
+                    "varieties": [],
+                })
 
     return {
         "phase2_results": phase2_results,

@@ -38,6 +38,7 @@ class PaperState(TypedDict, total=False):
     doc_context: dict                   # Document Context（作物、study 数、chunk 列表等）
     extraction_hints: list              # 提取提示（字段位置、查找需求）
     needs_lookup: bool                  # 是否需要 lookup phase（去补充材料/表格查找）
+    parse_quality: dict                 # parse 质量门控信息（has_crop, has_study_count, has_hints, overall）
 
     # ── extract_phase1 节点 ──
     phase1_result: dict                 # {paper: {...}, studies: [...]}

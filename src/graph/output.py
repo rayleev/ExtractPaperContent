@@ -28,6 +28,7 @@
 from __future__ import annotations
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -38,6 +39,31 @@ import psycopg2.extras
 from src.core.models import ExtractionResult
 
 logger = logging.getLogger("paper_extractor")
+
+
+def extract_year_from_doi(doi: str) -> Optional[int]:
+    """
+    从 DOI 中提取发表年份。
+
+    很多中文 DOI 格式为 10.xxxx/issn.xxxx.YYYYMMDD，
+    其中 YYYY 部分即为发表年份。
+
+    Args:
+        doi: DOI 字符串
+
+    Returns:
+        年份整数，或 None（无法提取时）
+    """
+    if not doi:
+        return None
+    # 匹配 DOI 中的年份（如 20230217 → 2023）
+    # 中文期刊 DOI 常见格式：10.16178/j.issn.0528-9017.20230217
+    match = re.search(r'(\d{4})\d{4}', doi)
+    if match:
+        year = int(match.group(1))
+        if 1990 <= year <= 2030:
+            return year
+    return None
 
 
 # ── 建表 SQL（PostgreSQL 语法）────────────────────────────
@@ -400,7 +426,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
             paper_id,
             meta.get("doi") or paper.get("paper_doi"),
             meta.get("title") or paper.get("paper_title"),
-            int(meta["year"]) if meta.get("year", "").isdigit() else paper.get("publication_year"),
+            int(meta["year"]) if meta.get("year", "").isdigit() else paper.get("publication_year") or extract_year_from_doi(meta.get("doi") or paper.get("paper_doi")),
             meta.get("journal") or paper.get("journal_name"),
             paper.get("crop_species"),
             cls.get("category"),

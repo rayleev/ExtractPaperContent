@@ -190,6 +190,16 @@ build 镜像 → 写入 secrets 到 /home/root01/deploy/paper-extractor/{config.
 
 ## 环境配置说明
 
+### 服务器连接
+- **部署服务器**：`root01@10.33.105.145`
+- **部署路径**：`/home/root01/deploy/paper-extractor/`
+- **运行用户**：`root01`（uid 1000:1000，非 root）
+- **PostgreSQL**：Docker 容器名 `postgres`，通过 `infra` 网络访问
+  - 数据库：`paper_extractor`
+  - 用户：`postgres`
+  - 密码：`Admin123!`
+  - 端口：5432
+
 ### 本地运行
 - **依赖**：`pip install -r requirements.txt`
 - **配置**：`cp config.yaml.example config.yaml` 后填入实际值

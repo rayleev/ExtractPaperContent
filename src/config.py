@@ -59,7 +59,7 @@ class LLMConfig:
     base_url: str = ""              # 必填：LLM API 地址
     api_key: str = ""               # 必填：LLM API Key
     model: str = "glm-52"
-    max_tokens: int = 8192
+    max_tokens: int = 16384
     temperature: float = 0.1
     max_retries: int = 5
     timeout: int = 600

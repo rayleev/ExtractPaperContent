@@ -15,13 +15,20 @@
    - "对照"/"CK"/"check"=is_check_variety=true
    - "增产率"/"增幅"/"比CK增产"=pct_over_check
    - "显著性标记"/"Duncan检验字母"/"多重比较字母"=significance_group
-3. **产量只提取原始值和单位，不要换算**
+3. **模糊日期处理规则**（适用于 sowing_date 和 harvest_date）：
+   - 如果论文写"5月27日播种"→ sowing_date="2022-05-27"（年份从 trial_year 取）
+   - 如果论文写"10月收获"→ harvest_date="2022-10"（只精确到月）
+   - 如果论文写"10月15日收获"→ harvest_date="2022-10-15"
+   - 如果论文写"9月下旬至10月上旬收获"→ harvest_date="2022-09"（取起始月）
+   - 如果论文写"全生育期 120 天"且有 sowing_date→ harvest_date 从 sowing_date + 120 天推算
+   - 如果论文没有写收获日期→ harvest_date 填 null
+4. **产量只提取原始值和单位，不要换算**
    - 只提取 yield_raw_value（原始数值）和 yield_raw_unit（原始单位）
    - 不要填写 yield_standard_value 和 yield_standard_unit，这两个字段由程序自动换算
    - 例如论文写"亩产445.3kg"，则 yield_raw_value=445.3, yield_raw_unit="kg/亩"
-4. **经纬度和海拔**：仅当论文中**明确写出具体数值**时才提取（如"试验站位于北纬30.5°、东经114.3°、海拔25m"），否则填 null
-5. **缺失字段填 null**，不要猜测
-6. **每个品种一条记录**：从表格或文字中提取每个品种的产量数据
+5. **经纬度和海拔**：仅当论文中**明确写出具体数值**时才提取（如"试验站位于北纬30.5°、东经114.3°、海拔25m"），否则填 null
+6. **缺失字段填 null**，不要猜测
+7. **每个品种一条记录**：从表格或文字中提取每个品种的产量数据
 
 ## 数据质量规则（必须遵守）
 

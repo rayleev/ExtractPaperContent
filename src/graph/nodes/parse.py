@@ -38,6 +38,8 @@ def _understand_document_full_text(
     abstract_text: str,
     methods_text: str,
     llm: LLMClient,
+    config: 'src.config.ParseConfig',
+    max_tokens_override: int = 0,
 ) -> Optional[dict]:
     """一次性给全文，LLM 理解（适用于短论文）。"""
     prompt_template = (PROMPT_DIR / "parse_understanding.txt").read_text(encoding="utf-8")
@@ -50,7 +52,8 @@ def _understand_document_full_text(
         strategy="full_text",
         chunk_info="",
     )
-    return llm.call_json(prompt, max_tokens=4000)
+    max_tokens = max_tokens_override if max_tokens_override > 0 else config.llm.max_tokens
+    return llm.call_json(prompt, max_tokens=max_tokens)
 
 
 def _understand_document_chunked(
@@ -59,9 +62,12 @@ def _understand_document_chunked(
     abstract_text: str,
     methods_text: str,
     llm: LLMClient,
+    config: 'src.config.ParseConfig',
+    max_tokens_override: int = 0,
 ) -> Optional[dict]:
     """分段理解 + 合并（适用于长论文 + 有章节标题）。"""
     prompt_template = (PROMPT_DIR / "parse_understanding.txt").read_text(encoding="utf-8")
+    max_tokens = max_tokens_override if max_tokens_override > 0 else config.llm.max_tokens
 
     # 分段：按章节切分（简化实现：按长度切分，每段约 8000 字符）
     chunks = _split_into_chunks(md_text, max_length=8000)
@@ -76,7 +82,7 @@ def _understand_document_chunked(
             strategy="chunked",
             chunk_info=f"第 {i+1}/{len(chunks)} 段",
         )
-        partial = llm.call_json(prompt, max_tokens=2000)
+        partial = llm.call_json(prompt, max_tokens=max_tokens)
         if partial:
             partial_results.append(partial)
 
@@ -89,7 +95,7 @@ def _understand_document_chunked(
         partial_results=partial_results,
         tree_outline=tree_outline,
     )
-    return llm.call_json(merge_prompt, max_tokens=4000)
+    return llm.call_json(merge_prompt, max_tokens=max_tokens)
 
 
 def _understand_document_sliding_window(
@@ -99,9 +105,11 @@ def _understand_document_sliding_window(
     methods_text: str,
     llm: LLMClient,
     config: 'src.config.ParseConfig',
+    max_tokens_override: int = 0,
 ) -> Optional[dict]:
     """滑动窗口 + 合并（适用于长论文 + 无章节标题）。"""
     prompt_template = (PROMPT_DIR / "parse_understanding.txt").read_text(encoding="utf-8")
+    max_tokens = max_tokens_override if max_tokens_override > 0 else config.llm.max_tokens
 
     chunks = _sliding_window(md_text, config.sliding_window_size, config.sliding_window_step)
 
@@ -115,7 +123,7 @@ def _understand_document_sliding_window(
             strategy="sliding_window",
             chunk_info=f"窗口 {i+1}（起始位置 {start_pos}）",
         )
-        partial = llm.call_json(prompt, max_tokens=2000)
+        partial = llm.call_json(prompt, max_tokens=max_tokens)
         if partial:
             partial_results.append(partial)
 
@@ -128,7 +136,7 @@ def _understand_document_sliding_window(
         partial_results=partial_results,
         tree_outline=tree_outline,
     )
-    return llm.call_json(merge_prompt, max_tokens=4000)
+    return llm.call_json(merge_prompt, max_tokens=max_tokens)
 
 
 def _split_into_chunks(text: str, max_length: int = 8000) -> list[str]:
@@ -162,6 +170,7 @@ def _understand_document(
     methods_text: str,
     llm: LLMClient,
     config: 'src.config.ParseConfig',
+    max_tokens_override: int = 0,
 ) -> Optional[dict]:
     """
     根据论文长度选择策略，调用 LLM 理解论文。
@@ -178,7 +187,8 @@ def _understand_document(
         # 短论文：一次性给全文
         logger.info(f"    Using full-text strategy (est. {estimated_tokens:.0f} tokens)")
         return _understand_document_full_text(
-            md_text, tree_outline, abstract_text, methods_text, llm
+            md_text, tree_outline, abstract_text, methods_text, llm, config,
+            max_tokens_override=max_tokens_override,
         )
 
     # 长论文：检查是否有章节标题
@@ -189,7 +199,8 @@ def _understand_document(
         if config.chunked_enabled:
             logger.info(f"    Using chunked strategy (est. {estimated_tokens:.0f} tokens)")
             return _understand_document_chunked(
-                md_text, tree_outline, abstract_text, methods_text, llm
+                md_text, tree_outline, abstract_text, methods_text, llm, config,
+                max_tokens_override=max_tokens_override,
             )
         else:
             logger.info(f"    Chunked strategy disabled, falling back to full-text")
@@ -198,15 +209,71 @@ def _understand_document(
     if config.sliding_window_enabled:
         logger.info(f"    Using sliding-window strategy (est. {estimated_tokens:.0f} tokens)")
         return _understand_document_sliding_window(
-            md_text, tree_outline, abstract_text, methods_text, llm, config
+            md_text, tree_outline, abstract_text, methods_text, llm, config,
+            max_tokens_override=max_tokens_override,
         )
     else:
         logger.info(f"    Sliding-window strategy disabled, falling back to full-text")
 
     # 兜底：一次性给全文（可能超上下文，但总比失败好）
     return _understand_document_full_text(
-        md_text, tree_outline, abstract_text, methods_text, llm
+        md_text, tree_outline, abstract_text, methods_text, llm,
+        max_tokens_override=max_tokens_override,
     )
+
+
+def _compute_parse_max_tokens(config: 'src.config.ParseConfig', md_text: str) -> int:
+    """
+    parse 节点的 max_tokens。
+
+    parse 输出需要完整的 doc_context + extraction_hints，
+    长论文（含多个 study、多个 variety）输出量较大。
+    直接设固定高值 32768，避免动态计算不够。
+    """
+    return max(config.llm.max_tokens, 32768)
+
+
+def _check_parse_quality(
+    doc_context: dict,
+    extraction_hints: list,
+    pid: str,
+) -> dict:
+    """
+    检查 parse 输出的质量。
+
+    Returns:
+        {
+            "has_crop": bool,
+            "has_study_count": bool,
+            "has_hints": bool,
+            "overall": "ok" | "weak" | "failed"
+        }
+    """
+    has_crop = bool(doc_context.get("crop"))
+    has_study_count = doc_context.get("study_count", 0) > 0
+    has_hints = len(extraction_hints) > 0
+
+    if has_crop and has_study_count and has_hints:
+        overall = "ok"
+    elif has_crop or has_study_count:
+        overall = "weak"
+    else:
+        overall = "failed"
+
+    if overall != "ok":
+        logger.warning(
+            f"  [{pid[:25]}] Parse quality: {overall} "
+            f"(crop={doc_context.get('crop', 'NONE')}, "
+            f"study_count={doc_context.get('study_count', 0)}, "
+            f"hints={len(extraction_hints)})"
+        )
+
+    return {
+        "has_crop": has_crop,
+        "has_study_count": has_study_count,
+        "has_hints": has_hints,
+        "overall": overall,
+    }
 
 
 def parse_node(
@@ -225,6 +292,7 @@ def parse_node(
       - methods_text（方法部分）
       - doc_context（Document Context：作物、study 数、chunk 列表等）
       - extraction_hints（提取提示：字段位置、查找需求）
+      - parse_quality（parse 质量门控信息）
     """
     paper_meta = state["paper_meta"]
     pid = state["paper_id"]
@@ -293,10 +361,13 @@ def parse_node(
     doc_context = {}
     extraction_hints = []
     needs_lookup = False
+    parse_max_tokens = _compute_parse_max_tokens(config.parse, md_text)
 
     if llm:
+        # 使用动态计算的 max_tokens（比默认值更大）
         understanding = _understand_document(
-            md_text, outline, abstract_text, methods_text, llm, config.parse
+            md_text, outline, abstract_text, methods_text, llm, config.parse,
+            max_tokens_override=parse_max_tokens,
         )
         if understanding:
             doc_context = understanding.get("doc_context", {})
@@ -306,11 +377,15 @@ def parse_node(
             logger.info(f"  [{pid[:25]}] Document understood: {doc_context.get('crop', '?')}, "
                        f"{doc_context.get('study_count', '?')} studies, "
                        f"{len(extraction_hints)} hints, "
-                       f"needs_lookup={needs_lookup}")
+                       f"needs_lookup={needs_lookup}, "
+                       f"max_tokens={parse_max_tokens}")
         else:
             logger.warning(f"  [{pid[:25]}] LLM understanding failed")
     else:
         logger.warning(f"  [{pid[:25]}] LLM client not available, skipping understanding")
+
+    # ── 质量门控 ──
+    parse_quality = _check_parse_quality(doc_context, extraction_hints, pid)
 
     return {
         "parsed_text": md_text,
@@ -320,5 +395,6 @@ def parse_node(
         "doc_context": doc_context,
         "extraction_hints": extraction_hints,
         "needs_lookup": needs_lookup,
+        "parse_quality": parse_quality,
         "status": "parsed",
     }

@@ -65,9 +65,27 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
                 "varieties": phase2_item.get("varieties", [])
             })
 
+    # ── 去重：移除无效 study（空壳 study 或无 varieties）──
+    # 当 Phase 2 产生幽灵 study（无 study_title 且无有效 varieties）时，在此剔除
+    valid_studies = []
+    for study in combined_studies:
+        has_title = bool(study.get("study_title"))
+        has_varieties = bool(study.get("varieties"))
+        # 有 study_title 或有 varieties 的才算有效 study
+        if has_title or has_varieties:
+            valid_studies.append(study)
+        else:
+            logger.info(f"  [{pid[:25]}] Dedup: removing empty study (no title, no varieties)")
+
+    if len(valid_studies) < len(combined_studies):
+        logger.info(
+            f"  [{pid[:25]}] Dedup: {len(combined_studies)} → {len(valid_studies)} studies "
+            f"(removed {len(combined_studies) - len(valid_studies)} empty)"
+        )
+
     combined = {
         "paper": paper_info,
-        "studies": combined_studies,
+        "studies": valid_studies,
     }
 
     # ── Step 0: 国家复核（提取后基于全文判断，仅放行中国论文）──

@@ -102,9 +102,15 @@ def _route_after_download(state: PaperState) -> str:
 
 
 def _route_after_parse(state: PaperState) -> str:
-    """parse 后：先检查是否失败，再检查 stop_after。"""
+    """parse 后：先检查是否失败，再检查质量门控，最后检查 stop_after。"""
     if state.get("status") == "failed":
         return "fail"
+    # 质量门控：parse 质量太弱时跳过，避免垃圾数据进入后续节点
+    parse_quality = state.get("parse_quality", {})
+    if parse_quality.get("overall") == "failed":
+        pid = state.get("paper_id", "?")[:25]
+        logger.warning(f"  [{pid}] Parse quality too weak ({parse_quality}), skipping extraction")
+        return "parse_failed"
     if _should_stop(state, "parse"):
         return "done"
     return "continue"
@@ -227,7 +233,7 @@ def build_paper_graph(
         {"parse": "parse", "no_pdf": END, "done": END})
 
     graph.add_conditional_edges("parse", _route_after_parse,
-        {"continue": "extract_phase1", "fail": END, "done": END})
+        {"continue": "extract_phase1", "fail": END, "parse_failed": END, "done": END})
 
     graph.add_conditional_edges("extract_phase1", _route_after_phase1,
         {"continue": "extract_phase2", "skip": END, "done": END})

@@ -14,3 +14,17 @@
 - 对照处理对应的记录 `is_check_variety` 设为 `true`
 - 在 `source_location` 中标注该对照处理在表格中的位置（如 "表3-对照(CK)行"）
 - 其余栽培管理信息可填入 `cultural_practices` / `experimental_design_description`
+
+## 重要说明：is_check_variety 字段的双语义
+
+`is_check_variety` 在不同论文类别中有**不同含义**，请正确理解：
+
+| 论文类别 | is_check_variety = true 的含义 |
+|----------|-------------------------------|
+| **varietal_yield**（品种比较型） | 该品种是**对照品种**（CK），即试验中作为对照的品种 |
+| **management_yield**（管理措施型） | 该记录是**对照处理**（CK），即常规栽培/不施肥/基准处理等 |
+
+**本论文为 management_yield，因此：**
+- `is_check_variety = true` → 表示该记录是**对照处理**（如常规栽培、不施肥、当地常用措施等）
+- `is_check_variety = false` → 表示该记录是**其他处理**（如高量施肥、滴灌、高密度等）
+- 如果论文中所有处理都是平等的（没有明确对照），则所有记录 `is_check_variety = false`
