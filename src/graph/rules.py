@@ -38,9 +38,15 @@ def _to_float(value):
         return None
 
 
-def validate_extraction(extraction: dict, paper_meta: dict, config=None) -> dict:
+def validate_extraction(extraction: dict, paper_meta: dict, config=None, category: str = "") -> dict:
     """
     对提取结果运行规则验证。
+
+    Args:
+        extraction: 提取结果
+        paper_meta: 论文元数据
+        config: 配置对象
+        category: 论文类别（management_yield 时跳过 CK_001 检查）
 
     返回:
         {
@@ -72,10 +78,11 @@ def validate_extraction(extraction: dict, paper_meta: dict, config=None) -> dict
 
         # ── Study 级检查 ──
 
-        # 对照品种存在性
-        ck_varieties = [v for v in varieties if v.get("is_check_variety")]
-        if not ck_varieties and varieties:
-            warnings.append({"code": "CK_001", "message": f"{prefix}: 缺少对照品种"})
+        # 对照品种存在性（management_yield 中对照处理非必须，跳过检查）
+        if category != "management_yield":
+            ck_varieties = [v for v in varieties if v.get("is_check_variety")]
+            if not ck_varieties and varieties:
+                warnings.append({"code": "CK_001", "message": f"{prefix}: 缺少对照品种"})
 
         # trial_year ≤ publication_year
         trial_year = study.get("trial_year", "")

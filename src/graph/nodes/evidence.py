@@ -45,13 +45,20 @@ def _get_field_value(extraction: dict, field_name: str):
 
 
 def _find_evidence_from_hints(field_name: str, value, extraction_hints: list):
-    """从 extraction_hints 中获取候选证据"""
+    """从 extraction_hints 中获取候选证据（按字段名匹配，值做包含检查）"""
+    if value is None:
+        return None
+    value_str = str(value)
     for hint in extraction_hints:
-        if hint.get("field") == field_name and hint.get("value") == value:
+        if hint.get("field") != field_name:
+            continue
+        hint_value = str(hint.get("value", ""))
+        # 精确匹配 或 包含匹配（处理 yield_raw_value=8383.5 vs hint="8383.5 kg/hm²" 的情况）
+        if hint_value == value_str or value_str in hint_value or hint_value in value_str:
             return {
                 "location": "unknown",
                 "text": hint.get("context", ""),
-                "crop": hint.get("crop", ""),  # ← 保留作物信息
+                "crop": hint.get("crop", ""),
             }
     return None
 

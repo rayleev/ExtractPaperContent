@@ -32,8 +32,9 @@ def validate_node(state: PaperState, config: AppConfig) -> dict:
     """
     extraction = state.get("extraction", {})
     paper_meta = state.get("paper_meta", {})
+    category = state.get("classification", {}).get("category", "")
 
-    report = validate_extraction(extraction, paper_meta, config)
+    report = validate_extraction(extraction, paper_meta, config, category=category)
 
     stats = report["stats"]
     logger.info(

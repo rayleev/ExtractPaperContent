@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 import logging
+import re
 
 from src.config import AppConfig
 from src.core.models import ExtractionResult
@@ -28,6 +29,56 @@ from src.graph.state import PaperState
 logger = logging.getLogger("paper_extractor")
 
 
+def _infer_harvest_date(study: dict, parsed_text: str) -> None:
+    """
+    后处理推断 harvest_date：
+    1. 如果论文写"X月收获"，从 trial_year + 月份推断
+    2. 如果论文写"全生育期 N 天"，从 sowing_date + N 天推断
+    """
+    if study.get("harvest_date"):
+        return  # 已有值，跳过
+
+    trial_year = str(study.get("trial_year", ""))
+    if not trial_year or not parsed_text:
+        return
+
+    year = trial_year[:4]
+    if not year.isdigit():
+        return
+
+    # 模式1: "X月收获" / "X月X日收获"
+    patterns = [
+        rf'(\d{{1,2}})月\s*(\d{{1,2}})日?\s*(?:收获|收割|成熟)',
+        rf'(?:收获|收割|成熟)\s*.*?(\d{{1,2}})月',
+        rf'(\d{{1,2}})月\s*(?:收获|收割|成熟)',
+    ]
+    for pat in patterns:
+        match = re.search(pat, parsed_text)
+        if match:
+            month = int(match.group(1))
+            day = match.group(2) if match.lastindex and match.lastindex >= 2 else None
+            if 1 <= month <= 12:
+                if day and day.isdigit() and 1 <= int(day) <= 31:
+                    study["harvest_date"] = f"{year}-{month:02d}-{int(day):02d}"
+                else:
+                    study["harvest_date"] = f"{year}-{month:02d}"
+                return
+
+    # 模式2: "全生育期 N 天" → sowing_date + N 天
+    sowing = study.get("sowing_date")
+    if sowing:
+        growth_match = re.search(r'全生育期\s*(\d+)\s*天', parsed_text)
+        if growth_match:
+            try:
+                days = int(growth_match.group(1))
+                from datetime import datetime, timedelta
+                sow_date = datetime.fromisoformat(str(sowing))
+                harvest = sow_date + timedelta(days=days)
+                study["harvest_date"] = harvest.strftime("%Y-%m-%d")
+            except (ValueError, OverflowError):
+                pass
+
+
 def postprocess_node(state: PaperState, config: AppConfig) -> dict:
     """
     后处理节点：合并 Phase 1 + Phase 2 结果并执行数据清洗。
@@ -37,6 +88,7 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
     pid = state["paper_id"]
     phase1 = state.get("phase1_result", {})
     phase2 = state.get("phase2_results", [])
+    parsed_text = state.get("parsed_text", "")
 
     paper_info = phase1.get("paper", {})
     phase1_studies = phase1.get("studies", [])
@@ -131,6 +183,10 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
     if "studies" in extraction:
         studies = extraction["studies"]
         before_count = len(studies)
+
+        # 0. harvest_date 推断（从原文提取）
+        for study in studies:
+            _infer_harvest_date(study, parsed_text)
 
         # 1. 多站点检测：site_name 含"、"的标记警告
         multi_site = 0

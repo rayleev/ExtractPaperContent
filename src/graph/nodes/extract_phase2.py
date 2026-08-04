@@ -145,6 +145,38 @@ def extract_phase2_node(
 
     phase2_results = []
 
+    def _build_relevant_content_from_hints(hints: list, max_chars: int = 8000) -> str:
+        """
+        从 extraction_hints 构建相关内容文本。
+
+        每个 hint 包含 context（字段出现的原文片段）和 source_tables。
+        去重后拼接，作为 LLM 输入（替代整篇论文）。
+        """
+        if not hints:
+            return ""
+
+        seen_contexts = set()
+        parts = []
+        total_chars = 0
+
+        for hint in hints:
+            context = hint.get("context", "").strip()
+            if not context or context in seen_contexts:
+                continue
+            seen_contexts.add(context)
+
+            # 添加 source_tables 信息（如果有）
+            source_tables = hint.get("source_tables", [])
+            table_info = f" [来源: {', '.join(source_tables)}]" if source_tables else ""
+
+            part = f"{context}{table_info}"
+            if total_chars + len(part) > max_chars:
+                break
+            parts.append(part)
+            total_chars += len(part)
+
+        return "\n\n---\n\n".join(parts)
+
     def _find_best_section_for_study(study_index: int, study_title: str) -> str:
         """
         为指定 study 找到最匹配的实验章节内容。
@@ -173,11 +205,25 @@ def extract_phase2_node(
                 f"试验站: {s.get('experimental_site_name', '')}"
             )
 
-            # 从文档树获取对应章节内容
-            section_content = _find_best_section_for_study(i, s.get("study_title", ""))
-            max_content = config.extraction.max_text_chars
-            if len(section_content) > max_content:
-                section_content = section_content[:max_content] + "\n\n[...TRUNCATED...]"
+            # 优先使用 hints 构建相关内容（比整篇论文小很多）
+            relevant_content = _build_relevant_content_from_hints(extraction_hints)
+            if len(relevant_content) >= 2000:
+                # hints 提供足够覆盖，使用精简内容
+                section_content = relevant_content
+                logger.info(
+                    f"  [{pid[:25]}] Study {i+1}: using hints-based content "
+                    f"({len(relevant_content)} chars)"
+                )
+            else:
+                # hints 覆盖不足，回退到完整章节内容
+                section_content = _find_best_section_for_study(i, s.get("study_title", ""))
+                max_content = config.extraction.max_text_chars
+                if len(section_content) > max_content:
+                    section_content = section_content[:max_content] + "\n\n[...TRUNCATED...]"
+                logger.info(
+                    f"  [{pid[:25]}] Study {i+1}: hints insufficient ({len(relevant_content)} chars), "
+                    f"using section content ({len(section_content)} chars)"
+                )
 
             prompt = prompt_template.format(
                 paper_id=pid,
@@ -217,10 +263,16 @@ def extract_phase2_node(
         for i, exp_node in enumerate(actual_exp_sections):
             study_context = f"试验名称: {exp_node.title}"
 
-            section_content = collect_content(exp_node)
-            max_content = config.extraction.max_text_chars
-            if len(section_content) > max_content:
-                section_content = section_content[:max_content] + "\n\n[...TRUNCATED...]"
+            # 优先使用 hints 构建相关内容
+            relevant_content = _build_relevant_content_from_hints(extraction_hints)
+            if len(relevant_content) >= 2000:
+                section_content = relevant_content
+            else:
+                # hints 覆盖不足，回退到文档树章节内容
+                section_content = collect_content(exp_node)
+                max_content = config.extraction.max_text_chars
+                if len(section_content) > max_content:
+                    section_content = section_content[:max_content] + "\n\n[...TRUNCATED...]"
 
             prompt = prompt_template.format(
                 paper_id=pid,
