@@ -222,7 +222,7 @@ def _understand_document(
     )
 
 
-def _compute_parse_max_tokens(config: 'src.config.ParseConfig', md_text: str) -> int:
+def _compute_parse_max_tokens(llm_max_tokens: int, md_text: str) -> int:
     """
     parse 节点的 max_tokens。
 
@@ -230,7 +230,7 @@ def _compute_parse_max_tokens(config: 'src.config.ParseConfig', md_text: str) ->
     长论文（含多个 study、多个 variety）输出量较大。
     直接设固定高值 32768，避免动态计算不够。
     """
-    return max(config.llm.max_tokens, 32768)
+    return max(llm_max_tokens, 32768)
 
 
 def _check_parse_quality(
@@ -361,7 +361,7 @@ def parse_node(
     doc_context = {}
     extraction_hints = []
     needs_lookup = False
-    parse_max_tokens = _compute_parse_max_tokens(config.parse, md_text)
+    parse_max_tokens = _compute_parse_max_tokens(config.llm.max_tokens, md_text)
 
     if llm:
         # 使用动态计算的 max_tokens（比默认值更大）
