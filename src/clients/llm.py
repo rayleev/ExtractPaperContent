@@ -69,6 +69,16 @@ class LLMClient:
                 data = resp.json()
                 content = data["choices"][0]["message"]["content"]
                 elapsed = time.time() - t0
+                # 防御性检查：reasoning 模型可能只返回 reasoning 不返回 content
+                if content is None:
+                    reasoning = data["choices"][0]["message"].get("reasoning")
+                    logger.warning(
+                        f"  LLM attempt {attempt}/{self.config.max_retries}: content is None "
+                        f"(reasoning model?). reasoning length={len(reasoning) if reasoning else 0}, "
+                        f"finish_reason={data['choices'][0].get('finish_reason')}, "
+                        f"usage={data.get('usage')}"
+                    )
+                    content = ""
                 logger.debug(
                     f"  LLM ok: {prompt_chars} chars → {len(content)} chars, "
                     f"{elapsed:.1f}s, model={self.config.model}"
@@ -80,6 +90,8 @@ class LLMClient:
                     f"  LLM attempt {attempt}/{self.config.max_retries} failed "
                     f"({elapsed:.1f}s, prompt={prompt_chars} chars): {e}"
                 )
+                if 'data' in dir() and data:
+                    logger.debug(f"  LLM response data: {str(data)[:500]}")
                 if attempt < self.config.max_retries:
                     time.sleep(min(3 * (2 ** attempt), 60))
         return None

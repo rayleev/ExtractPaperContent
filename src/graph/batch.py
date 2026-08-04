@@ -352,6 +352,13 @@ class BatchOrchestrator:
         title = paper.get("title", "")[:80]
         status = result.get("status", "unknown")
 
+        # 调试日志：打印完整 state 和 errors
+        logger.debug(
+            f"  [{pid[:25]}] _handle_paper_result: status={status}, "
+            f"errors={result.get('errors', 'N/A')}, "
+            f"keys={list(result.keys())}"
+        )
+
         # 复用批次级长连接，避免每篇论文创建/销毁连接的开销
         conn = self._get_batch_connection()
 
@@ -416,6 +423,11 @@ class BatchOrchestrator:
                 )
         except Exception:
             # 回滚当前论文的未提交操作，保持连接可用供后续论文复用
+            logger.error(
+                f"  [{pid[:25]}] _handle_paper_result exception: "
+                f"status={status}, errors={result.get('errors', 'N/A')}",
+                exc_info=True,
+            )
             conn.rollback()
             raise
 

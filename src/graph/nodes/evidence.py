@@ -80,6 +80,13 @@ def evidence_node(
     parsed_text = state.get("parsed_text", "")
     pid = state["paper_id"]
 
+    # 调试日志
+    logger.debug(
+        f"  [{pid[:25]}] evidence_node: parsed_text type={type(parsed_text).__name__}, "
+        f"len={len(parsed_text) if parsed_text else 'None/empty'}, "
+        f"extraction keys={list(extraction.keys()) if extraction else 'None'}"
+    )
+
     # 收集要验证的字段
     field_configs = config.evidence_validation.fields
     if not field_configs:
@@ -103,6 +110,12 @@ def evidence_node(
 
     # 批量 LLM 验证
     prompt_template = (PROMPT_DIR / "evidence.txt").read_text(encoding="utf-8")
+
+    # 防御性检查：parsed_text 为 None 时转为空字符串
+    if parsed_text is None:
+        logger.warning(f"  [{pid[:25]}] evidence_node: parsed_text is None, using empty string")
+        parsed_text = ""
+
     prompt = prompt_template.format(
         fields_json=json.dumps(field_values, ensure_ascii=False, indent=2),
         candidates_json=json.dumps(candidates, ensure_ascii=False, indent=2),

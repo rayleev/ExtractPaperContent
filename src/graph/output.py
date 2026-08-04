@@ -792,97 +792,105 @@ def insert_statistics(conn, extractions: List[dict], run_id: str = ""):
     summary = compute_summary(paper_cov, field_cov, all_fields)
     generated_at = datetime.now().isoformat()
 
-    with conn.cursor() as cur:
-        # 清理同 run_id 旧记录
-        if run_id:
-            cur.execute("DELETE FROM pe_aud_paper_coverage WHERE run_id = %s", (run_id,))
-            cur.execute("DELETE FROM pe_aud_field_coverage WHERE run_id = %s", (run_id,))
-            cur.execute("DELETE FROM pe_aud_stats_summary WHERE run_id = %s", (run_id,))
+    try:
+        with conn.cursor() as cur:
+            # 清理同 run_id 旧记录
+            if run_id:
+                cur.execute("DELETE FROM pe_aud_paper_coverage WHERE run_id = %s", (run_id,))
+                cur.execute("DELETE FROM pe_aud_field_coverage WHERE run_id = %s", (run_id,))
+                cur.execute("DELETE FROM pe_aud_stats_summary WHERE run_id = %s", (run_id,))
 
-        # 1. 每篇论文覆盖率
-        for p in paper_cov:
+            # 1. 每篇论文覆盖率
+            for p in paper_cov:
+                cur.execute("""
+                    INSERT INTO pe_aud_paper_coverage
+                    (paper_id, run_id, total_fields, filled_fields, coverage,
+                     paper_level, study_level, variety_level,
+                     num_studies, num_varieties, generated_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (paper_id) DO UPDATE SET
+                        run_id = EXCLUDED.run_id,
+                        total_fields = EXCLUDED.total_fields,
+                        filled_fields = EXCLUDED.filled_fields,
+                        coverage = EXCLUDED.coverage,
+                        paper_level = EXCLUDED.paper_level,
+                        study_level = EXCLUDED.study_level,
+                        variety_level = EXCLUDED.variety_level,
+                        num_studies = EXCLUDED.num_studies,
+                        num_varieties = EXCLUDED.num_varieties,
+                        generated_at = EXCLUDED.generated_at
+                """, (
+                    p.get("paper_id", ""), run_id,
+                    p.get("total_fields", 0), p.get("filled_fields", 0),
+                    p.get("coverage", 0.0),
+                    p.get("paper_level", 0.0), p.get("study_level", 0.0),
+                    p.get("variety_level", 0.0),
+                    p.get("num_studies", 0), p.get("num_varieties", 0),
+                    generated_at,
+                ))
+
+            # 2. 每字段命中率
+            for f in field_cov:
+                cur.execute("""
+                    INSERT INTO pe_aud_field_coverage
+                    (run_id, field_name, level, hit_count, miss_count,
+                     total_count, coverage, generated_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+                    run_id,
+                    f.get("field_name", ""), f.get("level", ""),
+                    f.get("hit_count", 0), f.get("miss_count", 0),
+                    f.get("total_count", 0), f.get("coverage", 0.0),
+                    generated_at,
+                ))
+
+            # 3. 批次汇总
+            top_missing = summary.get("top_missing_fields", [])
             cur.execute("""
-                INSERT INTO pe_aud_paper_coverage
-                (paper_id, run_id, total_fields, filled_fields, coverage,
-                 paper_level, study_level, variety_level,
-                 num_studies, num_varieties, generated_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                ON CONFLICT (paper_id) DO UPDATE SET
-                    run_id = EXCLUDED.run_id,
-                    total_fields = EXCLUDED.total_fields,
-                    filled_fields = EXCLUDED.filled_fields,
-                    coverage = EXCLUDED.coverage,
+                INSERT INTO pe_aud_stats_summary
+                (run_id, paper_count, average_coverage, paper_level, study_level,
+                 variety_level, best_paper, worst_paper, top_missing_fields,
+                 total_studies, total_varieties, generated_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT (run_id) DO UPDATE SET
+                    paper_count = EXCLUDED.paper_count,
+                    average_coverage = EXCLUDED.average_coverage,
                     paper_level = EXCLUDED.paper_level,
                     study_level = EXCLUDED.study_level,
                     variety_level = EXCLUDED.variety_level,
-                    num_studies = EXCLUDED.num_studies,
-                    num_varieties = EXCLUDED.num_varieties,
+                    best_paper = EXCLUDED.best_paper,
+                    worst_paper = EXCLUDED.worst_paper,
+                    top_missing_fields = EXCLUDED.top_missing_fields,
+                    total_studies = EXCLUDED.total_studies,
+                    total_varieties = EXCLUDED.total_varieties,
                     generated_at = EXCLUDED.generated_at
             """, (
-                p.get("paper_id", ""), run_id,
-                p.get("total_fields", 0), p.get("filled_fields", 0),
-                p.get("coverage", 0.0),
-                p.get("paper_level", 0.0), p.get("study_level", 0.0),
-                p.get("variety_level", 0.0),
-                p.get("num_studies", 0), p.get("num_varieties", 0),
-                generated_at,
-            ))
-
-        # 2. 每字段命中率
-        for f in field_cov:
-            cur.execute("""
-                INSERT INTO pe_aud_field_coverage
-                (run_id, field_name, level, hit_count, miss_count,
-                 total_count, coverage, generated_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (
                 run_id,
-                f.get("field_name", ""), f.get("level", ""),
-                f.get("hit_count", 0), f.get("miss_count", 0),
-                f.get("total_count", 0), f.get("coverage", 0.0),
+                summary.get("paper_count", 0),
+                summary.get("average_coverage", 0.0),
+                summary.get("paper_level", 0.0),
+                summary.get("study_level", 0.0),
+                summary.get("variety_level", 0.0),
+                summary.get("best_paper", ""),
+                summary.get("worst_paper", ""),
+                json.dumps(top_missing, ensure_ascii=False),
+                summary.get("total_studies", 0),
+                summary.get("total_varieties", 0),
                 generated_at,
             ))
 
-        # 3. 批次汇总
-        top_missing = summary.get("top_missing_fields", [])
-        cur.execute("""
-            INSERT INTO pe_aud_stats_summary
-            (run_id, paper_count, average_coverage, paper_level, study_level,
-             variety_level, best_paper, worst_paper, top_missing_fields,
-             total_studies, total_varieties, generated_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (run_id) DO UPDATE SET
-                paper_count = EXCLUDED.paper_count,
-                average_coverage = EXCLUDED.average_coverage,
-                paper_level = EXCLUDED.paper_level,
-                study_level = EXCLUDED.study_level,
-                variety_level = EXCLUDED.variety_level,
-                best_paper = EXCLUDED.best_paper,
-                worst_paper = EXCLUDED.worst_paper,
-                top_missing_fields = EXCLUDED.top_missing_fields,
-                total_studies = EXCLUDED.total_studies,
-                total_varieties = EXCLUDED.total_varieties,
-                generated_at = EXCLUDED.generated_at
-        """, (
-            run_id,
-            summary.get("paper_count", 0),
-            summary.get("average_coverage", 0.0),
-            summary.get("paper_level", 0.0),
-            summary.get("study_level", 0.0),
-            summary.get("variety_level", 0.0),
-            summary.get("best_paper", ""),
-            summary.get("worst_paper", ""),
-            json.dumps(top_missing, ensure_ascii=False),
-            summary.get("total_studies", 0),
-            summary.get("total_varieties", 0),
-            generated_at,
-        ))
-
-    conn.commit()
-    logger.info(
-        f"Statistics → DB: {len(paper_cov)} paper_coverage, "
-        f"{len(field_cov)} field_coverage, 1 summary (run_id={run_id})"
-    )
+        conn.commit()
+        logger.info(
+            f"Statistics → DB: {len(paper_cov)} paper_coverage, "
+            f"{len(field_cov)} field_coverage, 1 summary (run_id={run_id})"
+        )
+    except Exception as e:
+        logger.error(
+            f"insert_statistics failed: {e}, "
+            f"extractions count={len(extractions)}, run_id={run_id}",
+            exc_info=True,
+        )
+        raise
 
 
 def get_table_stats(conn) -> dict:
