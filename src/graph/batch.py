@@ -5,7 +5,7 @@ BatchOrchestrator — 管理大规模论文批量处理。
   - 多论文并发处理（ThreadPoolExecutor）
   - SQLite checkpoint 断点续跑（LangGraph 内部，独立于输出库）
   - 逐篇写入 PostgreSQL 输出数据库（实时持久化）
-  - 批次完成后生成验证报告 + 覆盖率统计 + CSV 导出
+  - 批次完成后生成验证报告 + 覆盖率统计（写入 DB）
   - 步骤级注册表，支持分步执行和自动补全
   - 多实例支持（通过 INSTANCE_ID 环境变量标识）
 """
@@ -33,8 +33,7 @@ from src.graph.output import (
     insert_pdf_missing,
     delete_pdf_missing,
     claim_tasks,
-    export_table_csv,
-    export_delivery_csv,
+    insert_statistics,
     get_table_stats,
     update_paper_status,
 )
@@ -71,14 +70,11 @@ class BatchOrchestrator:
         # 步骤优先级（数值越大 = 完成度越高）
         self._STEP_ORDER = {"classify": 1, "parse": 2, "extract": 3}
 
-        # 输出目录
-        self.output_dir = config.extraction_path
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
         # PostgreSQL 输出数据库（所有结果统一存储，含注册表功能）
-        # 注意：不使用共享连接，每个线程创建独立连接以避免事务冲突
+        # 批次级连接：在 process_batch / process_from_db 期间复用，避免频繁创建/销毁
         self._db_connection_string = config.database.connection_string
         self._db_lock = threading.Lock()
+        self._batch_conn = None  # 批次级长连接，由 _get_batch_connection 懒创建
 
         # 多实例标识（用于任务领取 claim_tasks）
         self.instance_id = os.environ.get("INSTANCE_ID", "default")
@@ -104,7 +100,7 @@ class BatchOrchestrator:
         批量处理论文列表。
 
         每篇论文独立运行完整的 graph，通过 ThreadPoolExecutor 并发。
-        完成后生成验证报告、覆盖率统计和 CSV 导出。
+        完成后生成验证报告、覆盖率统计（写入 DB）。
         """
         self.stats["total"] = len(papers)
         self.stats["started_at"] = datetime.now().isoformat()
@@ -162,66 +158,65 @@ class BatchOrchestrator:
 
         # 并发处理（仅处理本实例成功领取的论文）
         import time as _time
-        with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
-            futures = {}
-            submit_times = {}
-            for paper in claimed_papers:
-                pid = paper.get("paper_id", "")
-                future = executor.submit(
-                    self._process_one_paper,
-                    paper,
-                    cls_lookup.get(pid),
-                    completed_registry,
-                )
-                futures[future] = paper
-                submit_times[future] = _time.time()
-
-            for future in as_completed(futures):
-                paper = futures[future]
-                duration = _time.time() - submit_times.get(future, _time.time())
-                try:
-                    result = future.result()
-                    self._handle_paper_result(result, paper, target_step, duration)
-                except Exception as e:
-                    pid = paper.get("paper_id", "")
-                    title = paper.get("title", "")[:80]
-                    logger.error(f"  Paper {pid[:25]} failed: {e}", exc_info=True)
-                    self.stats["failed"] += 1
-                    # 异常处理使用独立连接
-                    err_conn = get_connection(self._db_connection_string)
-                    try:
-                        update_paper_status(
-                            err_conn, pid, title, target_step,
-                            "error", duration, str(e)[:500], self.config.run_id,
-                        )
-                    finally:
-                        err_conn.close()
-                    self._log_progress()
-
-        self.stats["finished_at"] = datetime.now().isoformat()
-
-        # ── 批次完成后：写入分类、验证报告，生成统计，导出 CSV ──
-        if target_step == "extract" and self._completed_results:
-            self._generate_outputs(classifications)
-        elif target_step == "classify" and self._completed_results:
-            # 仅分类步骤：写入分类表
-            cls_records = [r.get("classification") for r in self._completed_results if r.get("classification")]
-            if cls_records:
-                # 使用独立连接
-                cls_conn = get_connection(self._db_connection_string)
-                insert_classification(cls_conn, cls_records)
-                export_table_csv(cls_conn, "pe_aud_classification",
-                                 self.config.classification_path / "pe_aud_classification.csv")
-                cls_conn.close()
-
-        # 打印 DB 统计
         try:
-            conn = get_connection(self._db_connection_string)
-            table_stats = get_table_stats(conn)
-            logger.info(f"Database stats: {table_stats}")
-            conn.close()
-        except Exception:
-            pass
+            with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
+                futures = {}
+                submit_times = {}
+                for paper in claimed_papers:
+                    pid = paper.get("paper_id", "")
+                    future = executor.submit(
+                        self._process_one_paper,
+                        paper,
+                        cls_lookup.get(pid),
+                        completed_registry,
+                    )
+                    futures[future] = paper
+                    submit_times[future] = _time.time()
+
+                for future in as_completed(futures):
+                    paper = futures[future]
+                    duration = _time.time() - submit_times.get(future, _time.time())
+                    try:
+                        result = future.result()
+                        self._handle_paper_result(result, paper, target_step, duration)
+                    except Exception as e:
+                        pid = paper.get("paper_id", "")
+                        title = paper.get("title", "")[:80]
+                        logger.error(f"  Paper {pid[:25]} failed: {e}", exc_info=True)
+                        self.stats["failed"] += 1
+                        # 复用批次级连接处理异常状态更新
+                        conn = self._get_batch_connection()
+                        try:
+                            update_paper_status(
+                                conn, pid, title, target_step,
+                                "error", duration, str(e)[:500], self.config.run_id,
+                            )
+                        except Exception:
+                            conn.rollback()
+                        self._log_progress()
+
+            self.stats["finished_at"] = datetime.now().isoformat()
+
+            # ── 批次完成后：写入分类、验证报告，生成统计 ──
+            # 复用批次级连接进行汇总操作
+            conn = self._get_batch_connection()
+            if target_step == "extract" and self._completed_results:
+                self._generate_outputs(conn, classifications)
+            elif target_step == "classify" and self._completed_results:
+                # 仅分类步骤：写入分类表
+                cls_records = [r.get("classification") for r in self._completed_results if r.get("classification")]
+                if cls_records:
+                    insert_classification(conn, cls_records)
+
+            # 打印 DB 统计
+            try:
+                table_stats = get_table_stats(conn)
+                logger.info(f"Database stats: {table_stats}")
+            except Exception:
+                pass
+        finally:
+            # 批次结束，关闭长连接
+            self._close_batch_connection()
 
         logger.info(
             f"Batch complete: {self.stats['completed']} ok, "
@@ -231,44 +226,24 @@ class BatchOrchestrator:
 
         return self.stats
 
-    def _generate_outputs(self, classifications: Optional[List[dict]]):
-        """批次完成后生成所有输出文件。"""
+    def _generate_outputs(self, conn, classifications: Optional[List[dict]]):
+        """批次完成后生成所有输出（复用传入的批次级连接，全部写入 DB）。"""
         logger.info("Generating outputs...")
 
-        # 使用独立连接，避免与线程中的连接冲突
-        conn = get_connection(self._db_connection_string)
-
-        # 1. 分类结果写入 DB + 导出 CSV
+        # 1. 分类结果写入 DB
         if classifications:
             insert_classification(conn, classifications)
-            export_table_csv(conn, "pe_aud_classification",
-                             self.config.classification_path / "pe_aud_classification.csv")
 
-        # 2. 验证报告写入 DB + 导出 CSV
+        # 2. 验证报告写入 DB
         insert_validation(conn, self._completed_results)
-        export_table_csv(conn, "pe_aud_validation_issues",
-                         self.config.validation_path / "pe_aud_validation_issues.csv")
 
-        # 3. 提取结果导出 CSV（规范化表 + 交接用宽表）
-        export_table_csv(conn, "pe_core_varieties",
-                         self.config.extraction_path / "pe_core_varieties.csv")
-        export_table_csv(conn, "pe_core_studies",
-                         self.config.extraction_path / "pe_core_studies.csv")
-        export_table_csv(conn, "pe_core_papers",
-                         self.config.extraction_path / "pe_core_papers.csv")
-        export_delivery_csv(conn,
-                            self.config.extraction_path / "varieties_flat.csv")
-
-        # 4. 覆盖率统计
-        from src.output.statistics import generate_statistics
-        generate_statistics(self._completed_results, self.config.statistics_path)
+        # 3. 覆盖率统计写入 DB
+        insert_statistics(conn, self._completed_results, run_id=self.config.run_id)
 
         logger.info(
             f"Output DB: {self.config.database.host}:{self.config.database.port}"
             f"/{self.config.database.dbname}"
         )
-
-        conn.close()
 
     def _process_one_paper(
         self,
@@ -351,14 +326,34 @@ class BatchOrchestrator:
             f"{self.stats['skipped']} skip"
         )
 
+    def _get_batch_connection(self):
+        """获取批次级长连接（懒创建，整个批次期间复用）。
+
+        _handle_paper_result 在主线程的 as_completed 循环中顺序调用，
+        因此单连接即可满足需求，无需线程本地存储。
+        """
+        if self._batch_conn is None or self._batch_conn.closed:
+            self._batch_conn = get_connection(self._db_connection_string)
+        return self._batch_conn
+
+    def _close_batch_connection(self):
+        """关闭批次级长连接（批次结束时调用）。"""
+        if self._batch_conn is not None:
+            try:
+                if not self._batch_conn.closed:
+                    self._batch_conn.close()
+            except Exception as e:
+                logger.warning(f"Failed to close batch connection: {e}")
+            finally:
+                self._batch_conn = None
     def _handle_paper_result(self, result: dict, paper: dict, target_step: str, duration: float):
         """处理单篇论文的执行结果，更新统计和数据库（process_batch / process_from_db 共用）。"""
         pid = paper.get("paper_id", "")
         title = paper.get("title", "")[:80]
         status = result.get("status", "unknown")
 
-        # 每个线程使用独立连接，避免事务冲突
-        conn = get_connection(self._db_connection_string)
+        # 复用批次级长连接，避免每篇论文创建/销毁连接的开销
+        conn = self._get_batch_connection()
 
         try:
             # 分类结果实时入库（无论论文最终 completed / skipped / failed）
@@ -419,8 +414,10 @@ class BatchOrchestrator:
                     conn, pid, title, target_step,
                     "failed", duration, error_msg, self.config.run_id,
                 )
-        finally:
-            conn.close()
+        except Exception:
+            # 回滚当前论文的未提交操作，保持连接可用供后续论文复用
+            conn.rollback()
+            raise
 
         self._log_progress()
 
@@ -456,119 +453,124 @@ class BatchOrchestrator:
         total_claimed = 0
         chunk_num = 0
 
-        while True:
-            # ── 检查外部停止信号 ──
-            if self.stop_event and self.stop_event.is_set():
-                logger.info(
-                    f"Stop signal detected — halting after {chunk_num} chunks "
-                    f"({total_claimed} papers claimed)"
-                )
-                break
-
-            chunk_num += 1
-
-            # ── 原子领取一块 pending 论文（含元数据）──
-            # 使用独立连接领取，避免长事务持有连接
-            claim_conn = get_connection(self._db_connection_string)
-            try:
-                with claim_conn.cursor() as cur:
-                    cur.execute("""
-                        SELECT paper_id, title, ss_paper_id, doi, abstract, publication_year, journal
-                        FROM pe_reg_paper_status
-                        WHERE status = 'pending'
-                        ORDER BY paper_id
-                        LIMIT %s
-                        FOR UPDATE SKIP LOCKED
-                    """, (chunk_size,))
-                    rows = cur.fetchall()
-
-                    if not rows:
-                        break
-
-                    chunk_ids = [r[0] for r in rows]
-                    cur.execute("""
-                        UPDATE pe_reg_paper_status
-                        SET status = 'processing', claimed_by = %s, updated_at = %s
-                        WHERE paper_id = ANY(%s)
-                    """, (self.instance_id, datetime.now().isoformat(), chunk_ids))
-
-                claim_conn.commit()
-            finally:
-                claim_conn.close()
-
-            # ── 转换为 paper dict ──
-            papers = []
-            for r in rows:
-                papers.append({
-                    "paper_id": r[0],
-                    "title": r[1] or "",
-                    "ss_paper_id": r[2] or "",
-                    "doi": r[3] or "",
-                    "abstract": r[4] or "",
-                    "publication_year": r[5] or "",
-                    "journal": r[6] or "",
-                })
-
-            total_claimed += len(papers)
-            self.stats["total"] = total_claimed
-            logger.info(
-                f"Chunk {chunk_num}: claimed {len(papers)} papers "
-                f"(total claimed: {total_claimed})"
-            )
-
-            # ── 并发处理本块 ──
-            with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
-                futures = {}
-                submit_times = {}
-                for paper in papers:
-                    future = executor.submit(
-                        self._process_one_paper, paper, None, {},
-                    )
-                    futures[future] = paper
-                    submit_times[future] = _time.time()
-
-                for future in as_completed(futures):
-                    paper = futures[future]
-                    duration = _time.time() - submit_times.get(future, _time.time())
-                    try:
-                        result = future.result()
-                        self._handle_paper_result(result, paper, target_step, duration)
-                    except Exception as e:
-                        pid = paper.get("paper_id", "")
-                        title = paper.get("title", "")[:80]
-                        logger.error(f"  Paper {pid[:25]} failed: {e}", exc_info=True)
-                        self.stats["failed"] += 1
-                        # 异常处理使用独立连接
-                        err_conn = get_connection(self._db_connection_string)
-                        try:
-                            update_paper_status(
-                                err_conn, pid, title, target_step,
-                                "error", duration, str(e)[:500], self.config.run_id,
-                            )
-                        finally:
-                            err_conn.close()
-                        self._log_progress()
-
-            logger.info(
-                f"Chunk {chunk_num} done: "
-                f"{self.stats['completed']} ok, {self.stats['failed']} fail, "
-                f"{self.stats['skipped']} skip (total: {total_claimed})"
-            )
-
-        self.stats["total"] = total_claimed
-        self.stats["finished_at"] = datetime.now().isoformat()
-
-        # 批次完成后生成输出
-        if target_step == "extract" and self._completed_results:
-            self._generate_outputs(None)
-
         try:
-            conn = get_connection(self._db_connection_string)
-            table_stats = get_table_stats(conn)
-            logger.info(f"Database stats: {table_stats}")
-            conn.close()
-        except Exception:
-            pass
+            while True:
+                # ── 检查外部停止信号 ──
+                if self.stop_event and self.stop_event.is_set():
+                    logger.info(
+                        f"Stop signal detected — halting after {chunk_num} chunks "
+                        f"({total_claimed} papers claimed)"
+                    )
+                    break
+
+                chunk_num += 1
+
+                # ── 原子领取一块 pending 论文（含元数据）──
+                # 复用批次级连接（领取是短事务，commit 后即释放行锁）
+                claim_conn = self._get_batch_connection()
+                try:
+                    with claim_conn.cursor() as cur:
+                        cur.execute("""
+                            SELECT paper_id, title, ss_paper_id, doi, abstract, publication_year, journal
+                            FROM pe_reg_paper_status
+                            WHERE status = 'pending'
+                            ORDER BY paper_id
+                            LIMIT %s
+                            FOR UPDATE SKIP LOCKED
+                        """, (chunk_size,))
+                        rows = cur.fetchall()
+
+                        if not rows:
+                            break
+
+                        chunk_ids = [r[0] for r in rows]
+                        cur.execute("""
+                            UPDATE pe_reg_paper_status
+                            SET status = 'processing', claimed_by = %s, updated_at = %s
+                            WHERE paper_id = ANY(%s)
+                        """, (self.instance_id, datetime.now().isoformat(), chunk_ids))
+
+                    claim_conn.commit()
+                except Exception:
+                    claim_conn.rollback()
+                    raise
+
+                # ── 转换为 paper dict ──
+                papers = []
+                for r in rows:
+                    papers.append({
+                        "paper_id": r[0],
+                        "title": r[1] or "",
+                        "ss_paper_id": r[2] or "",
+                        "doi": r[3] or "",
+                        "abstract": r[4] or "",
+                        "publication_year": r[5] or "",
+                        "journal": r[6] or "",
+                    })
+
+                total_claimed += len(papers)
+                self.stats["total"] = total_claimed
+                logger.info(
+                    f"Chunk {chunk_num}: claimed {len(papers)} papers "
+                    f"(total claimed: {total_claimed})"
+                )
+
+                # ── 并发处理本块 ──
+                with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
+                    futures = {}
+                    submit_times = {}
+                    for paper in papers:
+                        future = executor.submit(
+                            self._process_one_paper, paper, None, {},
+                        )
+                        futures[future] = paper
+                        submit_times[future] = _time.time()
+
+                    for future in as_completed(futures):
+                        paper = futures[future]
+                        duration = _time.time() - submit_times.get(future, _time.time())
+                        try:
+                            result = future.result()
+                            self._handle_paper_result(result, paper, target_step, duration)
+                        except Exception as e:
+                            pid = paper.get("paper_id", "")
+                            title = paper.get("title", "")[:80]
+                            logger.error(f"  Paper {pid[:25]} failed: {e}", exc_info=True)
+                            self.stats["failed"] += 1
+                            # 复用批次级连接处理异常状态更新
+                            conn = self._get_batch_connection()
+                            try:
+                                update_paper_status(
+                                    conn, pid, title, target_step,
+                                    "error", duration, str(e)[:500], self.config.run_id,
+                                )
+                            except Exception:
+                                conn.rollback()
+                            self._log_progress()
+
+                logger.info(
+                    f"Chunk {chunk_num} done: "
+                    f"{self.stats['completed']} ok, {self.stats['failed']} fail, "
+                    f"{self.stats['skipped']} skip (total: {total_claimed})"
+                )
+
+            self.stats["total"] = total_claimed
+            self.stats["finished_at"] = datetime.now().isoformat()
+
+            # 批次完成后生成输出（复用批次级连接）
+            if target_step == "extract" and self._completed_results:
+                conn = self._get_batch_connection()
+                self._generate_outputs(conn, None)
+
+            try:
+                conn = self._get_batch_connection()
+                table_stats = get_table_stats(conn)
+                logger.info(f"Database stats: {table_stats}")
+            except Exception:
+                pass
+        finally:
+            # 批次结束，关闭长连接
+            self._close_batch_connection()
 
         logger.info(
             f"process_from_db complete: {self.stats['completed']} ok, "
@@ -601,8 +603,8 @@ class BatchOrchestrator:
         paper_ids = [p.get("paper_id", "") for p in papers if p.get("paper_id")]
         now = datetime.now().isoformat()
 
-        # 使用独立连接领取，避免长事务
-        conn = get_connection(self._db_connection_string)
+        # 复用批次级连接（领取是短事务，提交后即释放行锁，不会阻塞其他实例）
+        conn = self._get_batch_connection()
         try:
             with conn.cursor() as cur:
                 # 1) 为新论文创建 pending 行；将上次失败/出错的论文重置为 pending（允许重试）
@@ -660,8 +662,8 @@ class BatchOrchestrator:
         返回 {paper_id: target_step}，仅包含 status='completed' 的记录。
         """
         try:
-            # 使用独立连接
-            conn = get_connection(self._db_connection_string)
+            # 复用批次级连接
+            conn = self._get_batch_connection()
             with conn.cursor() as cur:
                 if paper_ids:
                     cur.execute(
@@ -675,7 +677,6 @@ class BatchOrchestrator:
                         "WHERE status = 'completed'"
                     )
                 registry = {row[0]: row[1] for row in cur.fetchall()}
-            conn.close()
             logger.info(
                 f"Registry: {len(registry)} papers already completed "
                 f"(checked {len(paper_ids) if paper_ids else 'all'} candidates)"

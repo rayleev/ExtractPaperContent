@@ -58,7 +58,7 @@ class MinerUConfig:
 class LLMConfig:
     base_url: str = ""              # 必填：LLM API 地址
     api_key: str = ""               # 必填：LLM API Key
-    model: str = "DSv4-flash"
+    model: str = "glm-52"
     max_tokens: int = 8192
     temperature: float = 0.1
     max_retries: int = 5
@@ -212,22 +212,6 @@ class AppConfig:
     @property
     def log_path(self) -> Path:
         return self._run_path / "logs"
-
-    @property
-    def classification_path(self) -> Path:
-        return self._run_path / "results" / "classification"
-
-    @property
-    def extraction_path(self) -> Path:
-        return self._run_path / "results" / "extraction"
-
-    @property
-    def validation_path(self) -> Path:
-        return self._run_path / "results" / "validation"
-
-    @property
-    def statistics_path(self) -> Path:
-        return self._run_path / "results" / "statistics"
 
 
 # ── 加载函数 ──────────────────────────────────────────────
