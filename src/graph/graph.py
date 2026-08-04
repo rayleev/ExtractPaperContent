@@ -54,14 +54,14 @@ def _timed(node_name: str, func):
     """包装节点函数，记录并打印执行耗时。"""
     def wrapper(state: PaperState) -> dict:
         pid = state.get("paper_id", "?")[:25]
+        logger.info(f"  [{pid}] {node_name} START")
         start = time.time()
         result = func(state)
         elapsed = time.time() - start
-        # 超过 1 秒的节点打印 INFO，否则 DEBUG
         if elapsed > 1.0:
-            logger.info(f"  [{pid}] {node_name}: {elapsed:.1f}s")
+            logger.info(f"  [{pid}] {node_name} END ({elapsed:.1f}s)")
         else:
-            logger.debug(f"  [{pid}] {node_name}: {elapsed:.2f}s")
+            logger.debug(f"  [{pid}] {node_name} END ({elapsed:.2f}s)")
         return result
     return wrapper
 

@@ -197,9 +197,12 @@ def extract_phase2_node(
 
     if use_phase1_studies:
         # ── 以 Phase 1 studies 为准 ──
+        logger.info(f"  [{pid[:25]}] Phase 2: processing {len(studies)} study/studies from Phase 1")
         for i, s in enumerate(studies):
+            study_title = s.get("study_title", "")
+            logger.info(f"  [{pid[:25]}] Study {i+1}/{len(studies)}: '{study_title[:50]}' → calling LLM...")
             study_context = (
-                f"试验名称: {s.get('study_title', '')}\n"
+                f"试验名称: {study_title}\n"
                 f"试验年份: {s.get('trial_year', '')}\n"
                 f"试验地点: {s.get('site_administrative_region', '')}\n"
                 f"试验站: {s.get('experimental_site_name', '')}"
@@ -238,6 +241,7 @@ def extract_phase2_node(
 
             # LLM 调用
             max_tokens = max(config.llm.max_tokens, 8192)
+            logger.info(f"  [{pid[:25]}] Study {i+1}/{len(studies)}: LLM calling (max_tokens={max_tokens})...")
             study_data = llm.call_json(prompt, max_tokens=max_tokens)
 
             if study_data:
@@ -247,21 +251,25 @@ def extract_phase2_node(
                     "varieties": varieties,
                 })
                 logger.info(
-                    f"  [{pid[:25]}] Study {i+1}: '{s.get('study_title', '')[:40]}' → "
+                    f"  [{pid[:25]}] Study {i+1}/{len(studies)}: '{study_title[:40]}' → "
                     f"{len(varieties)} varieties"
                 )
             else:
                 logger.warning(
-                    f"  [{pid[:25]}] Study {i+1}: '{s.get('study_title', '')[:40]}' → FAILED"
+                    f"  [{pid[:25]}] Study {i+1}/{len(studies)}: '{study_title[:40]}' → FAILED"
                 )
                 phase2_results.append({
                     "study_index": i,
                     "varieties": [],
                 })
+        logger.info(f"  [{pid[:25]}] Phase 2: done, {len(phase2_results)} study/studies processed")
     else:
         # ── Fallback: 使用文档树 ──
+        logger.info(f"  [{pid[:25]}] Phase 2: processing {len(actual_exp_sections)} study/studies from document tree")
         for i, exp_node in enumerate(actual_exp_sections):
-            study_context = f"试验名称: {exp_node.title}"
+            study_title = exp_node.title or ""
+            logger.info(f"  [{pid[:25]}] Study {i+1}/{len(actual_exp_sections)}: '{study_title[:50]}' → calling LLM...")
+            study_context = f"试验名称: {study_title}"
 
             # 优先使用 hints 构建相关内容
             relevant_content = _build_relevant_content_from_hints(extraction_hints)
@@ -286,6 +294,7 @@ def extract_phase2_node(
             )
 
             max_tokens = max(config.llm.max_tokens, 8192)
+            logger.info(f"  [{pid[:25]}] Study {i+1}/{len(actual_exp_sections)}: LLM calling (max_tokens={max_tokens})...")
             study_data = llm.call_json(prompt, max_tokens=max_tokens)
 
             if study_data:
@@ -295,17 +304,18 @@ def extract_phase2_node(
                     "varieties": varieties,
                 })
                 logger.info(
-                    f"  [{pid[:25]}] Study {i+1}: '{exp_node.title[:40]}' → "
+                    f"  [{pid[:25]}] Study {i+1}/{len(actual_exp_sections)}: '{study_title[:40]}' → "
                     f"{len(varieties)} varieties"
                 )
             else:
                 logger.warning(
-                    f"  [{pid[:25]}] Study {i+1}: '{exp_node.title[:40]}' → FAILED"
+                    f"  [{pid[:25]}] Study {i+1}/{len(actual_exp_sections)}: '{study_title[:40]}' → FAILED"
                 )
                 phase2_results.append({
                     "study_index": i,
                     "varieties": [],
                 })
+        logger.info(f"  [{pid[:25]}] Phase 2: done, {len(phase2_results)} study/studies processed")
 
     return {
         "phase2_results": phase2_results,

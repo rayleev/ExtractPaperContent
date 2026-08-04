@@ -80,7 +80,7 @@ def geocode_node(state: PaperState, config: AppConfig, geocoder: Geocoder) -> di
             if study.get("altitude") is None:
                 _supplement_altitude_from_province(study, region, site)
             geocoded_count += 1
-            logger.debug(
+            logger.info(
                 f"  [{pid[:25]}] Geocoded: {region or site} → "
                 f"({result.latitude:.4f}, {result.longitude:.4f}) src={result.source}"
             )

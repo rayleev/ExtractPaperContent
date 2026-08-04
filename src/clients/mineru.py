@@ -65,23 +65,32 @@ class MinerUClient:
         """
         url = f"{self.config.base_url}/graph/v1/tasks/{task_id}"
         start = time.time()
+        last_log = 0.0
+        poll_count = 0
         while time.time() - start < self.config.poll_timeout:
             try:
                 resp = self.session.get(url, timeout=30)
                 resp.raise_for_status()
                 data = resp.json()
                 status = data.get("status", "unknown")
+                poll_count += 1
+                elapsed = time.time() - start
                 if status == "failed":
                     logger.error(
                         f"  Task {task_id[:8]}... failed: {data.get('error', 'unknown error')}"
                     )
                     return status, None
                 if status == "completed":
+                    logger.info(f"  Task {task_id[:8]}... completed in {elapsed:.0f}s ({poll_count} polls)")
                     return status, data.get("result_url")
+                if elapsed - last_log >= 30.0:
+                    logger.info(f"  Task {task_id[:8]}... still {status} ({elapsed:.0f}s elapsed, {poll_count} polls)")
+                    last_log = elapsed
                 logger.debug(f"  Task {task_id[:8]}... status: {status}")
             except Exception as e:
                 logger.warning(f"  Poll error for {task_id[:8]}...: {e}")
             time.sleep(self.config.poll_interval)
+        logger.error(f"  Task {task_id[:8]}... timeout after {self.config.poll_timeout}s ({poll_count} polls)")
         return "timeout", None
 
     def get_result(
