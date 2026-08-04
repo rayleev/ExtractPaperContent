@@ -249,7 +249,14 @@ def _check_parse_quality(
             "overall": "ok" | "weak" | "failed"
         }
     """
-    has_crop = bool(doc_context.get("crop"))
+    # crops 可能是列表（新 prompt）或字符串（兼容旧格式）
+    crops_val = doc_context.get("crops") or doc_context.get("crop")
+    if isinstance(crops_val, list):
+        has_crop = len(crops_val) > 0
+        crops_val_display = str(crops_val)
+    else:
+        has_crop = bool(crops_val) and crops_val not in (None, "", "NONE", "null")
+        crops_val_display = crops_val or "NONE"
     has_study_count = doc_context.get("study_count", 0) > 0
     has_hints = len(extraction_hints) > 0
 
@@ -263,7 +270,7 @@ def _check_parse_quality(
     if overall != "ok":
         logger.warning(
             f"  [{pid[:25]}] Parse quality: {overall} "
-            f"(crop={doc_context.get('crop', 'NONE')}, "
+            f"(crop={crops_val_display}, "
             f"study_count={doc_context.get('study_count', 0)}, "
             f"hints={len(extraction_hints)})"
         )
@@ -374,7 +381,8 @@ def parse_node(
             extraction_hints = understanding.get("extraction_hints", [])
             # 根据 extraction_hints 判断是否需要 lookup phase
             needs_lookup = any(h.get("action") == "needs_lookup" for h in extraction_hints)
-            logger.info(f"  [{pid[:25]}] Document understood: {doc_context.get('crop', '?')}, "
+            crops_display = doc_context.get("crops") or doc_context.get("crop") or "?"
+            logger.info(f"  [{pid[:25]}] Document understood: {crops_display}, "
                        f"{doc_context.get('study_count', '?')} studies, "
                        f"{len(extraction_hints)} hints, "
                        f"needs_lookup={needs_lookup}, "
