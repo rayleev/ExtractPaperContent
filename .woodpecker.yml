@@ -63,11 +63,9 @@ steps:
         # 利用 docker 容器内的 root 权限 chown，不依赖宿主机 sudo
         # .env 不 chown，保持 root 属主 + 600 权限，让容器内 1000 进程能读但不能改（防 RCE 改凭据）
         chmod 600 "$DEPLOY_DIR/.env" 2>/dev/null || true
-        docker run --rm -v "$DEPLOY_DIR":/data alpine sh -c \
-          "chown -R 1000:1000 /data/docs /data/output /data/cache-1 /data/cache-2 /data/cache-3 && \
-           chown 1000:1000 /data/config.yaml && \
-           echo '✓ 数据目录属主已归位为 1000:1000'"
-        echo "数据目录授权完成"
+        docker run --rm -v "$DEPLOY_DIR":/data alpine chown -R 1000:1000 /data/docs /data/output /data/cache-1 /data/cache-2 /data/cache-3
+        docker run --rm -v "$DEPLOY_DIR":/data alpine chown 1000:1000 /data/config.yaml
+        echo "✓ 数据目录属主已归位为 1000:1000"
 
         # ── 2. 确保网络存在（docker-compose.yml 中两个网络都是 external）──
         docker network inspect infra >/dev/null 2>&1 || docker network create infra
