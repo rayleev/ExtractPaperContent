@@ -66,6 +66,7 @@ services:
       - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
       - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
       - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/output/runs-1:/app/output/runs
       - /home/root01/deploy/paper-extractor/cache-1:/app/cache
     logging: *common-logging
     env_file:
@@ -95,6 +96,7 @@ services:
       - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
       - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
       - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/output/runs-2:/app/output/runs
       - /home/root01/deploy/paper-extractor/cache-2:/app/cache
     logging: *common-logging
     env_file:
@@ -124,6 +126,7 @@ services:
       - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
       - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
       - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/output/runs-3:/app/output/runs
       - /home/root01/deploy/paper-extractor/cache-3:/app/cache
     logging: *common-logging
     env_file:
