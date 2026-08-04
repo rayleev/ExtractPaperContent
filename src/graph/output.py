@@ -489,7 +489,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                      yield_standard_unit, yield_value_type, significance_group,
                      pct_over_check, measurement_method, source_location,
                      confidence_level, extracted_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (paper_id, study_index, variety_index) DO UPDATE SET
                         variety_name = EXCLUDED.variety_name,
                         yield_standard_value = EXCLUDED.yield_standard_value,
