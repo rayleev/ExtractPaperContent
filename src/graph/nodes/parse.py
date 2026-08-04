@@ -139,8 +139,8 @@ def _understand_document_sliding_window(
     return llm.call_json(merge_prompt, max_tokens=max_tokens)
 
 
-def _split_into_chunks(text: str, max_length: int = 8000) -> list[str]:
-    """按长度切分文本（简化实现）。"""
+def _split_into_chunks(text: str, max_length: int = 50000) -> list[str]:
+    """按长度切分文本（中文约 33000 tokens/段，适配 1M 上下文窗口的 50% threshold）。"""
     if len(text) <= max_length:
         return [text]
 

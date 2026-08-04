@@ -66,6 +66,15 @@ geocoding:
   # baidu_url: "https://api.map.baidu.com/geocoding/v3/"
   # elevation_url: "https://api.open-meteo.com/v1/elevation"
 
+# 全文理解（parse 节点）
+parse:
+  context_window: 1000000          # LLM 上下文窗口大小（token），1M 模型设为 1000000
+  full_text_threshold: 0.5         # 论文 token < context_window * 此值 → 一次性给全文
+  chunked_enabled: true            # 长论文 + 有章节标题 → 分段理解
+  sliding_window_enabled: true     # 长论文 + 无章节标题 → 滑动窗口
+  sliding_window_size: 50000       # 滑动窗口大小（字符），中文约 33000 tokens
+  sliding_window_step: 40000       # 滑动窗口步长（字符）
+
 # 并发控制
 concurrency:
   classify_workers: 5

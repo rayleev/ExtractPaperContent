@@ -124,9 +124,9 @@ class ParseConfig:
     chunked_enabled: bool = True
     sliding_window_enabled: bool = True
     full_text_threshold: float = 0.5
-    context_window: int = 128000
-    sliding_window_size: int = 8000
-    sliding_window_step: int = 6400
+    context_window: int = 1000000
+    sliding_window_size: int = 50000
+    sliding_window_step: int = 40000
 
 
 @dataclass
