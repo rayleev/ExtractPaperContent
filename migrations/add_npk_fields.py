@@ -54,6 +54,30 @@ ALTER TABLE varieties_flat
     ADD COLUMN IF NOT EXISTS k_standard_value DOUBLE PRECISION;
 """
 
+COMMENT_SQL = """
+COMMENT ON COLUMN pe_core_varieties.treatment_name   IS '处理名称（management_yield或肥料试验时填写，如N0/N180/CK/滴灌/高密度）（来源: LLM提取）';
+COMMENT ON COLUMN pe_core_varieties.n_raw_value      IS '该处理纯氮(N)施用量原始数值（只抄录论文明确写出的纯养分量）（来源: LLM提取）';
+COMMENT ON COLUMN pe_core_varieties.n_raw_unit       IS '氮施用量原始单位，如kg/ha、kg/hm²、kg/亩（来源: LLM提取）';
+COMMENT ON COLUMN pe_core_varieties.p_raw_value      IS '该处理纯磷(P2O5)施用量原始数值（只抄录论文明确写出的纯养分量）（来源: LLM提取）';
+COMMENT ON COLUMN pe_core_varieties.p_raw_unit       IS '磷施用量原始单位（来源: LLM提取）';
+COMMENT ON COLUMN pe_core_varieties.k_raw_value      IS '该处理纯钾(K2O)施用量原始数值（只抄录论文明确写出的纯养分量）（来源: LLM提取）';
+COMMENT ON COLUMN pe_core_varieties.k_raw_unit       IS '钾施用量原始单位（来源: LLM提取）';
+COMMENT ON COLUMN pe_core_varieties.n_standard_value IS '程序换算的kg N/ha值（本期留空，换算逻辑后续实现）（来源: 程序计算）';
+COMMENT ON COLUMN pe_core_varieties.p_standard_value IS '程序换算的kg P2O5/ha值（本期留空）（来源: 程序计算）';
+COMMENT ON COLUMN pe_core_varieties.k_standard_value IS '程序换算的kg K2O/ha值（本期留空）（来源: 程序计算）';
+
+COMMENT ON COLUMN varieties_flat.treatment_name   IS '处理名称（management_yield或肥料试验时填写，如N0/N180/CK/滴灌/高密度）（来源: LLM提取）';
+COMMENT ON COLUMN varieties_flat.n_raw_value      IS '该处理纯氮(N)施用量原始数值（只抄录论文明确写出的纯养分量）（来源: LLM提取）';
+COMMENT ON COLUMN varieties_flat.n_raw_unit       IS '氮施用量原始单位，如kg/ha、kg/hm²、kg/亩（来源: LLM提取）';
+COMMENT ON COLUMN varieties_flat.p_raw_value      IS '该处理纯磷(P2O5)施用量原始数值（只抄录论文明确写出的纯养分量）（来源: LLM提取）';
+COMMENT ON COLUMN varieties_flat.p_raw_unit       IS '磷施用量原始单位（来源: LLM提取）';
+COMMENT ON COLUMN varieties_flat.k_raw_value      IS '该处理纯钾(K2O)施用量原始数值（只抄录论文明确写出的纯养分量）（来源: LLM提取）';
+COMMENT ON COLUMN varieties_flat.k_raw_unit       IS '钾施用量原始单位（来源: LLM提取）';
+COMMENT ON COLUMN varieties_flat.n_standard_value IS '程序换算的kg N/ha值（本期留空，换算逻辑后续实现）（来源: 程序计算）';
+COMMENT ON COLUMN varieties_flat.p_standard_value IS '程序换算的kg P2O5/ha值（本期留空）（来源: 程序计算）';
+COMMENT ON COLUMN varieties_flat.k_standard_value IS '程序换算的kg K2O/ha值（本期留空）（来源: 程序计算）';
+"""
+
 VERIFY_SQL = """
 SELECT table_name, column_name
 FROM information_schema.columns
@@ -83,6 +107,8 @@ def run_migration(connection_string: str) -> bool:
         with conn.cursor() as cur:
             logger.info("执行迁移: 为 pe_core_varieties 与 varieties_flat 添加 NPK 字段（10 列 × 2 表）")
             cur.execute(MIGRATION_SQL)
+            logger.info("补充字段注释: COMMENT ON COLUMN（10 列 × 2 表）")
+            cur.execute(COMMENT_SQL)
             conn.commit()
 
             cur.execute(VERIFY_SQL)
