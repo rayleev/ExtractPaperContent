@@ -131,6 +131,16 @@ CREATE TABLE IF NOT EXISTS pe_core_varieties (
     measurement_method TEXT,
     source_location TEXT,
     confidence_level TEXT,
+    treatment_name  TEXT,
+    n_raw_value     DOUBLE PRECISION,
+    n_raw_unit      TEXT,
+    p_raw_value     DOUBLE PRECISION,
+    p_raw_unit      TEXT,
+    k_raw_value     DOUBLE PRECISION,
+    k_raw_unit      TEXT,
+    n_standard_value DOUBLE PRECISION,
+    p_standard_value DOUBLE PRECISION,
+    k_standard_value DOUBLE PRECISION,
     PRIMARY KEY (paper_id, study_index, variety_index)
 );
 
@@ -178,6 +188,16 @@ CREATE TABLE IF NOT EXISTS varieties_flat (
     measurement_method TEXT,
     source_location TEXT,
     confidence_level TEXT,
+    treatment_name  TEXT,
+    n_raw_value     DOUBLE PRECISION,
+    n_raw_unit      TEXT,
+    p_raw_value     DOUBLE PRECISION,
+    p_raw_unit      TEXT,
+    k_raw_value     DOUBLE PRECISION,
+    k_raw_unit      TEXT,
+    n_standard_value DOUBLE PRECISION,
+    p_standard_value DOUBLE PRECISION,
+    k_standard_value DOUBLE PRECISION,
     extracted_at    TEXT,
     PRIMARY KEY (paper_id, study_index, variety_index)
 );
@@ -480,13 +500,18 @@ def insert_extraction(conn, result: dict, paper_id: str):
                      is_check_variety, variety_source, yield_raw_value, yield_raw_unit,
                      yield_standard_value, yield_standard_unit, yield_value_type,
                      significance_group, pct_over_check, measurement_method,
-                     source_location, confidence_level)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     source_location, confidence_level,
+                     treatment_name, n_raw_value, n_raw_unit, p_raw_value, p_raw_unit,
+                     k_raw_value, k_raw_unit, n_standard_value, p_standard_value, k_standard_value)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (paper_id, study_index, variety_index) DO UPDATE SET
                         variety_name = EXCLUDED.variety_name, variety_code = EXCLUDED.variety_code,
                         yield_raw_value = EXCLUDED.yield_raw_value,
                         yield_standard_value = EXCLUDED.yield_standard_value,
-                        pct_over_check = EXCLUDED.pct_over_check
+                        pct_over_check = EXCLUDED.pct_over_check,
+                        treatment_name = EXCLUDED.treatment_name,
+                        n_raw_value = EXCLUDED.n_raw_value, p_raw_value = EXCLUDED.p_raw_value,
+                        k_raw_value = EXCLUDED.k_raw_value
                 """, (
                     paper_id, si, vi,
                     v.get("variety_name"), v.get("variety_code"), is_ck_int,
@@ -496,6 +521,12 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     v.get("significance_group"), v.get("pct_over_check"),
                     v.get("measurement_method"), v.get("source_location"),
                     v.get("confidence_level"),
+                    v.get("treatment_name"),
+                    v.get("n_raw_value"), v.get("n_raw_unit"),
+                    v.get("p_raw_value"), v.get("p_raw_unit"),
+                    v.get("k_raw_value"), v.get("k_raw_unit"),
+                    v.get("n_standard_value"), v.get("p_standard_value"),
+                    v.get("k_standard_value"),
                 ))
 
                 # 宽表
@@ -514,12 +545,18 @@ def insert_extraction(conn, result: dict, paper_id: str):
                      yield_raw_value, yield_raw_unit, yield_standard_value,
                      yield_standard_unit, yield_value_type, significance_group,
                      pct_over_check, measurement_method, source_location,
-                     confidence_level, extracted_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     confidence_level,
+                     treatment_name, n_raw_value, n_raw_unit, p_raw_value, p_raw_unit,
+                     k_raw_value, k_raw_unit, n_standard_value, p_standard_value, k_standard_value,
+                     extracted_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (paper_id, study_index, variety_index) DO UPDATE SET
                         variety_name = EXCLUDED.variety_name,
                         yield_standard_value = EXCLUDED.yield_standard_value,
-                        extracted_at = EXCLUDED.extracted_at
+                        extracted_at = EXCLUDED.extracted_at,
+                        treatment_name = EXCLUDED.treatment_name,
+                        n_raw_value = EXCLUDED.n_raw_value, p_raw_value = EXCLUDED.p_raw_value,
+                        k_raw_value = EXCLUDED.k_raw_value
                 """, (
                     paper_id, si, vi,
                     meta.get("doi") or paper.get("paper_doi"),
@@ -544,7 +581,14 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     v.get("yield_standard_unit", "kg/ha"), v.get("yield_value_type"),
                     v.get("significance_group"), v.get("pct_over_check"),
                     v.get("measurement_method"), v.get("source_location"),
-                    v.get("confidence_level"), extracted_at,
+                    v.get("confidence_level"),
+                    v.get("treatment_name"),
+                    v.get("n_raw_value"), v.get("n_raw_unit"),
+                    v.get("p_raw_value"), v.get("p_raw_unit"),
+                    v.get("k_raw_value"), v.get("k_raw_unit"),
+                    v.get("n_standard_value"), v.get("p_standard_value"),
+                    v.get("k_standard_value"),
+                    extracted_at,
                 ))
 
         # ── pe_aud_evidence 表 ──

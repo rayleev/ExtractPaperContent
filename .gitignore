@@ -17,6 +17,7 @@ cache/
 
 # 测试文件（本地测试工具，不入库）
 tests/
+temp/
 
 # 配置文件（含 API Key，不入库）
 config.yaml

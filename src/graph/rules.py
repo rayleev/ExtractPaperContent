@@ -167,6 +167,18 @@ def validate_extraction(extraction: dict, paper_meta: dict, config=None, categor
             if not (v.get("source_location") or "").strip():
                 warnings.append({"code": "SOURCE_001", "message": f"{vprefix}: source_location 为空"})
 
+            # 6. NPK 施肥处理完整性：treatment_name 存在但 N/P/K raw 全空
+            treatment_name = (v.get("treatment_name") or "").strip()
+            if treatment_name:
+                n_raw = v.get("n_raw_value")
+                p_raw = v.get("p_raw_value")
+                k_raw = v.get("k_raw_value")
+                if n_raw is None and p_raw is None and k_raw is None:
+                    warnings.append({
+                        "code": "NUTRIENT_001",
+                        "message": f"{vprefix}: treatment_name='{treatment_name}' 但 N/P/K raw 全空（该处理声称是处理但未抄到任何养分量）"
+                    })
+
             # 收集品种产量用于跨 study 检查
             if std_val is not None:
                 variety_yields.setdefault(vname, []).append(std_val)

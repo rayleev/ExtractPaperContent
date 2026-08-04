@@ -72,6 +72,16 @@ class VarietyYield(BaseModel):
     measurement_method: Optional[str] = Field(None, description="产量测定与计产方法，如 '小区单打单收单计产，晒干扬净后称重'")
     source_location: Optional[str] = Field(None, description="[REQUIRED] 数据来源位置：论文中的具体表格或段落，如 '表5'、'Table 3'、'2.3节'")
     confidence_level: Optional[ConfidenceLevel] = Field(None, description="[REQUIRED] 本条记录的整体提取置信度：<high|medium|low>")
+    treatment_name: Optional[str] = Field(None, description="[OPTIONAL] 处理名称（management_yield 类别或肥料试验时填写），如 'N0'/'N180'/'N240'/'CK'/'常规灌溉'/'高密度'；品种比较试验无处理时填 null")
+    n_raw_value: Optional[float] = Field(None, description="[OPTIONAL] 该处理的纯氮(N)施用量数值，如 180。只抄录论文明确写出的纯养分量，复合肥只给总量不给养分含量时填 null")
+    n_raw_unit: Optional[str] = Field(None, description="[OPTIONAL] 氮施用量原始单位，如 'kg/ha'、'kg/hm²'、'kg/亩'")
+    p_raw_value: Optional[float] = Field(None, description="[OPTIONAL] 该处理的纯磷(P2O5)施用量数值。只抄录论文明确写出的纯养分量")
+    p_raw_unit: Optional[str] = Field(None, description="[OPTIONAL] 磷施用量原始单位")
+    k_raw_value: Optional[float] = Field(None, description="[OPTIONAL] 该处理的纯钾(K2O)施用量数值。只抄录论文明确写出的纯养分量")
+    k_raw_unit: Optional[str] = Field(None, description="[OPTIONAL] 钾施用量原始单位")
+    n_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的 kg N/ha 值，LLM不要填（本期留空，换算逻辑后续实现）")
+    p_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的 kg P2O5/ha 值，LLM不要填（本期留空）")
+    k_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的 kg K2O/ha 值，LLM不要填（本期留空）")
 
     @field_validator("pct_over_check", mode="before")
     @classmethod
@@ -260,6 +270,16 @@ class ExtractionResult(BaseModel):
                     "measurement_method": variety.measurement_method or "",
                     "source_location": variety.source_location or "",
                     "confidence_level": variety.confidence_level.value if variety.confidence_level else "",
+                    "treatment_name": variety.treatment_name or "",
+                    "n_raw_value": variety.n_raw_value if variety.n_raw_value is not None else "",
+                    "n_raw_unit": variety.n_raw_unit or "",
+                    "p_raw_value": variety.p_raw_value if variety.p_raw_value is not None else "",
+                    "p_raw_unit": variety.p_raw_unit or "",
+                    "k_raw_value": variety.k_raw_value if variety.k_raw_value is not None else "",
+                    "k_raw_unit": variety.k_raw_unit or "",
+                    "n_standard_value": variety.n_standard_value if variety.n_standard_value is not None else "",
+                    "p_standard_value": variety.p_standard_value if variety.p_standard_value is not None else "",
+                    "k_standard_value": variety.k_standard_value if variety.k_standard_value is not None else "",
                 }
                 rows.append(row)
         return rows

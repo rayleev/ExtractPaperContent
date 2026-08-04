@@ -29,6 +29,14 @@
 5. **经纬度和海拔**：仅当论文中**明确写出具体数值**时才提取（如"试验站位于北纬30.5°、东经114.3°、海拔25m"），否则填 null
 6. **缺失字段填 null**，不要猜测
 7. **每个品种一条记录**：从表格或文字中提取每个品种的产量数据
+8. **氮磷钾(NPK)施用量提取规则**（重要）：
+   - 只抄录论文中**明确写出的纯养分量**（如"施纯氮 180 kg/ha"、"施 P2O5 90 kg/ha"、"施 K2O 120 kg/ha"）
+   - 复合肥/有机肥若论文只给总量（如"施复合肥 750 kg/ha"）而**未给养分含量**，则 n/p/k_raw_value 一律填 null
+   - 复合肥若论文明确标注 N-P-K%（如"15-15-15 复合肥 600 kg/ha"），可分别折算纯养分量填入
+   - n_raw_unit/p_raw_unit/k_raw_unit 填论文原始单位（如 'kg/ha'、'kg/hm²'、'kg/亩'），不要换算
+   - 不要填 n_standard_value/p_standard_value/k_standard_value，这三个字段由程序自动换算
+   - 品种比较试验（非肥料试验）NPK 字段全部填 null
+   - 肥料试验中某处理若论文未提某种养分（如只施氮不施磷钾），则该养分 raw_value 填 0 或 null（按论文表述）
 
 ## 数据质量规则（必须遵守）
 
@@ -80,7 +88,14 @@
       "pct_over_check": "增产/减产百分比",
       "measurement_method": "产量测定与计产方法",
       "source_location": "[REQUIRED] 数据来源位置，如 '表3'、'2.3节'",
-      "confidence_level": "<high|medium|low>"
+      "confidence_level": "<high|medium|low>",
+      "treatment_name": "[OPTIONAL] 处理名称，肥料/灌溉/密度试验填处理名(如 'N0'/'N180'/'CK')，品种比较试验填 null",
+      "n_raw_value": "[OPTIONAL] 纯氮施用量数值，如 180",
+      "n_raw_unit": "[OPTIONAL] 氮施用量原始单位，如 'kg/ha'",
+      "p_raw_value": "[OPTIONAL] 纯磷(P2O5)施用量数值",
+      "p_raw_unit": "[OPTIONAL] 磷施用量原始单位",
+      "k_raw_value": "[OPTIONAL] 纯钾(K2O)施用量数值",
+      "k_raw_unit": "[OPTIONAL] 钾施用量原始单位"
     }}
   ]
 }}
@@ -96,7 +111,7 @@
 - source_location 必须标注数据来源（如 "表3"、"Table 5"、"3.2.3节"）
 - experimental_design_type 只能用 RCBD / Split-plot / CRD / Unknown
 - latitude/longitude/altitude 仅在论文明确写出时提取，否则填 null
-- 不要填 yield_standard_value、yield_standard_unit、geo_source
+- 不要填 yield_standard_value、yield_standard_unit、geo_source、n_standard_value、p_standard_value、k_standard_value
 
 ---
 

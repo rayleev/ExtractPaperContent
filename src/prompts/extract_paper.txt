@@ -88,6 +88,8 @@
 - 如果论文有多个试验（不同年份或不同地点），每个列一个元素
 - 如果 parse 已识别作物或数据文件链接，可直接复用，但仍需验证
 - latitude/longitude/altitude 仅在论文明确写出时提取，否则填 null
+- **品种级字段（variety_name、yield、treatment_name、NPK 施用量等）在 Phase 2 提取**，本阶段不提取
+- 若论文涉及施肥/肥料试验，请在 `cultural_practices` 或 `experimental_design_description` 中**原文保留**施肥量描述（如"设 N0/N180/N240 三个施氮水平，纯氮量分别为 0、180、240 kg/ha"），Phase 2 会据此提取 NPK 字段
 
 ---
 
