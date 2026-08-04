@@ -237,6 +237,16 @@ def parse_node(
             md_text = f.read()
         logger.info(f"  [{pid[:25]}] Read MD: {Path(md_path).name}")
 
+    # ── 优先级 1.5: 本地 parsed 目录缓存（避免重复调用 MinerU）──
+    # 即使 download 节点没设 md_path（比如它下载了 PDF），
+    # 只要 parsed 目录已有非空的 .md 文件，就直接复用
+    if not md_text:
+        local_cache = config.parsed_path / f"{pid}.md"
+        if local_cache.exists() and local_cache.stat().st_size > 100:
+            with open(local_cache, "r", encoding="utf-8") as f:
+                md_text = f.read()
+            logger.info(f"  [{pid[:25]}] Read local cache: {local_cache.name} ({len(md_text)} chars)")
+
     # ── 优先级 2: MinerU 解析 PDF ──
     if not md_text and mineru_client:
         pdf_path = paper_meta.get("pdf_path")
