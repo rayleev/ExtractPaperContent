@@ -79,6 +79,12 @@ class LLMClient:
         if thinking is not None:
             payload["thinking"] = thinking
         prompt_chars = len(prompt)
+        logger.debug(
+            f"  LLM payload: model={payload['model']}, "
+            f"max_tokens={payload['max_tokens']}, "
+            f"thinking={payload.get('thinking', 'NOT_SET')}, "
+            f"node={node_name}"
+        )
         for attempt in range(1, self.config.max_retries + 1):
             try:
                 t0 = time.time()
