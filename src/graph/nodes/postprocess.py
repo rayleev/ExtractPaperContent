@@ -219,6 +219,23 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
                 f"{len(studies)} studies remaining"
             )
 
+        # ── 空结果检测：所有 study 被过滤后标记为 skipped ──
+        if not studies:
+            filter_parts = []
+            if removed_field:
+                filter_parts.append(f"非大田试验({removed_field})")
+            if removed_yield:
+                filter_parts.append(f"无产量数据({removed_yield})")
+            reason = "、".join(filter_parts) if filter_parts else "所有 study 在后续处理中被过滤"
+            logger.info(f"  [{pid[:25]}] Postprocess SKIP: {reason}")
+            return {
+                "extraction": extraction,
+                "status": "skipped",
+                "errors": state.get("errors", []) + [
+                    {"node": "postprocess", "error": f"no valid studies remaining after filtering: {reason}"}
+                ],
+            }
+
     return {
         "extraction": extraction,
         "status": "postprocessed",
