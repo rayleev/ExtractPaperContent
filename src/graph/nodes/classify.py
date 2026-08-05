@@ -71,7 +71,7 @@ def classify_node(state: PaperState, config: AppConfig, llm: LLMClient) -> dict:
     )
 
     logger.info(f"  [{pid[:25]}] Classifying: {paper_meta.get('title', '')[:60]}")
-    result = llm.call_json(prompt, max_tokens=config.llm.classify_max_tokens)
+    result = llm.call_json(prompt, max_tokens=config.llm.classify_max_tokens, node_name="classify")
 
     # LLM 调用失败 → 标记为 error，让流程在此终止并入库为 failed
     # （而非默认 unknown 进入 filter 被误判为 skipped，掩盖真实失败原因）

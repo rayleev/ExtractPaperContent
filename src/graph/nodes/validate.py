@@ -123,7 +123,7 @@ def targeted_llm_validate_node(
             f"如果有明显错误，输出 {{\"verified\": false, \"reason\": \"错误描述\", \"correct_value\": \"正确值\"}}"
         )
 
-        result = llm.call_json(prompt, max_tokens=config.llm.validate_max_tokens)
+        result = llm.call_json(prompt, max_tokens=config.llm.validate_max_tokens, node_name="targeted_validate")
         if result and result.get("verified"):
             verified_count += 1
         elif result and not result.get("verified"):

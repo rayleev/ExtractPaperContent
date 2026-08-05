@@ -242,7 +242,7 @@ def extract_phase2_node(
             # LLM 调用
             max_tokens = max(config.llm.max_tokens, 8192)
             logger.info(f"  [{pid[:25]}] Study {i+1}/{len(studies)}: LLM calling (max_tokens={max_tokens})...")
-            study_data = llm.call_json(prompt, max_tokens=max_tokens)
+            study_data = llm.call_json(prompt, max_tokens=max_tokens, node_name="extract_phase2")
 
             if study_data:
                 varieties = study_data.get("varieties", [])
@@ -295,7 +295,7 @@ def extract_phase2_node(
 
             max_tokens = max(config.llm.max_tokens, 8192)
             logger.info(f"  [{pid[:25]}] Study {i+1}/{len(actual_exp_sections)}: LLM calling (max_tokens={max_tokens})...")
-            study_data = llm.call_json(prompt, max_tokens=max_tokens)
+            study_data = llm.call_json(prompt, max_tokens=max_tokens, node_name="extract_phase2")
 
             if study_data:
                 varieties = study_data.get("varieties", [])

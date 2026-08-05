@@ -48,8 +48,25 @@ class LLMClient:
                 time.sleep(0.5 - elapsed)
             LLMClient._last_call_time = time.time()
 
-    def call(self, prompt: str, max_tokens: int | None = None) -> Optional[str]:
-        """调用 LLM，返回原始文本响应。"""
+    def _resolve_thinking(self, node_name: str | None = None) -> dict | None:
+        """根据节点名决定最终的 thinking 配置。
+
+        优先级：节点级覆盖 > 全局 thinking > None（不传）
+        """
+        if node_name and node_name in self.config.thinking_overrides:
+            return self.config.thinking_overrides[node_name]
+        if self.config.thinking:
+            return self.config.thinking
+        return None
+
+    def call(self, prompt: str, max_tokens: int | None = None, node_name: str | None = None) -> Optional[str]:
+        """调用 LLM，返回原始文本响应。
+
+        Args:
+            prompt: 提示词
+            max_tokens: 最大输出 token 数
+            node_name: 节点名，用于选择对应的 thinking 配置
+        """
         self._throttle()
         url = f"{self.config.base_url}/chat/completions"
         payload = {
@@ -58,6 +75,9 @@ class LLMClient:
             "max_tokens": max_tokens or self.config.max_tokens,
             "temperature": self.config.temperature,
         }
+        thinking = self._resolve_thinking(node_name)
+        if thinking is not None:
+            payload["thinking"] = thinking
         prompt_chars = len(prompt)
         for attempt in range(1, self.config.max_retries + 1):
             try:
@@ -96,9 +116,15 @@ class LLMClient:
                     time.sleep(min(3 * (2 ** attempt), 60))
         return None
 
-    def call_json(self, prompt: str, max_tokens: int | None = None) -> Optional[dict]:
-        """调用 LLM 并解析 JSON 响应。"""
-        raw = self.call(prompt, max_tokens)
+    def call_json(self, prompt: str, max_tokens: int | None = None, node_name: str | None = None) -> Optional[dict]:
+        """调用 LLM 并解析 JSON 响应。
+
+        Args:
+            prompt: 提示词
+            max_tokens: 最大输出 token 数
+            node_name: 节点名，用于选择对应的 thinking 配置
+        """
+        raw = self.call(prompt, max_tokens, node_name=node_name)
         if not raw:
             return None
         cleaned = self.strip_code_fences(raw)

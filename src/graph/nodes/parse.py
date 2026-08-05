@@ -53,7 +53,7 @@ def _understand_document_full_text(
         chunk_info="",
     )
     max_tokens = max_tokens_override if max_tokens_override > 0 else config.llm.max_tokens
-    return llm.call_json(prompt, max_tokens=max_tokens)
+    return llm.call_json(prompt, max_tokens=max_tokens, node_name="parse")
 
 
 def _understand_document_chunked(
@@ -82,7 +82,7 @@ def _understand_document_chunked(
             strategy="chunked",
             chunk_info=f"第 {i+1}/{len(chunks)} 段",
         )
-        partial = llm.call_json(prompt, max_tokens=max_tokens)
+        partial = llm.call_json(prompt, max_tokens=max_tokens, node_name="parse")
         if partial:
             partial_results.append(partial)
 
@@ -95,7 +95,7 @@ def _understand_document_chunked(
         partial_results=partial_results,
         tree_outline=tree_outline,
     )
-    return llm.call_json(merge_prompt, max_tokens=max_tokens)
+    return llm.call_json(merge_prompt, max_tokens=max_tokens, node_name="parse")
 
 
 def _understand_document_sliding_window(
@@ -123,7 +123,7 @@ def _understand_document_sliding_window(
             strategy="sliding_window",
             chunk_info=f"窗口 {i+1}（起始位置 {start_pos}）",
         )
-        partial = llm.call_json(prompt, max_tokens=max_tokens)
+        partial = llm.call_json(prompt, max_tokens=max_tokens, node_name="parse")
         if partial:
             partial_results.append(partial)
 
@@ -136,7 +136,7 @@ def _understand_document_sliding_window(
         partial_results=partial_results,
         tree_outline=tree_outline,
     )
-    return llm.call_json(merge_prompt, max_tokens=max_tokens)
+    return llm.call_json(merge_prompt, max_tokens=max_tokens, node_name="parse")
 
 
 def _split_into_chunks(text: str, max_length: int = 50000) -> list[str]:

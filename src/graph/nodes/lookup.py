@@ -76,7 +76,7 @@ def lookup_node(
         md_text=md_text[:config.extraction.max_text_chars],
     )
 
-    result = llm.call_json(prompt, max_tokens=config.llm.max_tokens)
+    result = llm.call_json(prompt, max_tokens=config.llm.max_tokens, node_name="lookup")
     if not result:
         logger.warning(f"  [{pid[:25]}] Lookup FAILED: LLM returned no result")
         return {"lookup_results": [], "status": "lookup_failed"}

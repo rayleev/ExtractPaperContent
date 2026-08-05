@@ -67,6 +67,11 @@ class LLMConfig:
     classify_max_tokens: int = 1000
     evidence_max_tokens: int = 2000
     validate_max_tokens: int = 200
+    # 深度思考（thinking）配置
+    # 全局默认：空 dict = 不传（API 默认行为）；{"type": "disabled"} = 关闭；{"type": "enabled"} = 开启
+    thinking: dict = field(default_factory=dict)
+    # 节点级覆盖：键为节点名，值为 thinking 配置。优先级高于全局 thinking
+    thinking_overrides: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -271,6 +276,8 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         temperature=l.get("temperature", _get_default(LLMConfig, "temperature")),
         max_retries=l.get("max_retries", _get_default(LLMConfig, "max_retries")),
         timeout=l.get("timeout", _get_default(LLMConfig, "timeout")),
+        thinking=l.get("thinking", _get_default(LLMConfig, "thinking")),
+        thinking_overrides=l.get("thinking_overrides", _get_default(LLMConfig, "thinking_overrides")),
     )
 
     # ── 提取参数 ──

@@ -128,7 +128,7 @@ parse 节点未成功，请自行理解论文内容。
 
     logger.info(f"  [{pid[:25]}] Phase1: prompt {len(prompt)} chars, "
                 f"parse={'success' if parse_success else 'failed'}, calling LLM (max_tokens={config.llm.max_tokens})...")
-    result = llm.call_json(prompt, max_tokens=config.llm.max_tokens)
+    result = llm.call_json(prompt, max_tokens=config.llm.max_tokens, node_name="extract_phase1")
     if not result:
         logger.warning(f"  [{pid[:25]}] Phase1 FAILED: LLM returned no result")
         return {
