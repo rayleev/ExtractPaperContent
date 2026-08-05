@@ -63,6 +63,10 @@ class LLMConfig:
     temperature: float = 0.1
     max_retries: int = 5
     timeout: int = 600
+    # 各节点输出上限（可配置，方便调整）
+    classify_max_tokens: int = 1000
+    evidence_max_tokens: int = 2000
+    validate_max_tokens: int = 200
 
 
 @dataclass

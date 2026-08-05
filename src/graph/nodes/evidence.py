@@ -129,7 +129,7 @@ def evidence_node(
         parsed_text=parsed_text[:8000],  # 截断以节省 token
     )
 
-    result = llm.call_json(prompt, max_tokens=2000)
+    result = llm.call_json(prompt, max_tokens=config.llm.evidence_max_tokens)
     evidence_nodes = result.get("evidence_nodes", []) if result else []
 
     logger.info(f"  [{pid[:25]}] Evidence: {len(evidence_nodes)} fields verified")
