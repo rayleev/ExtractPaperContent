@@ -78,8 +78,20 @@ def lookup_node(
 
     result = llm.call_json(prompt, max_tokens=config.llm.max_tokens, node_name="lookup")
     if not result:
-        logger.warning(f"  [{pid[:25]}] Lookup FAILED: LLM returned no result")
-        return {"lookup_results": [], "status": "lookup_failed"}
+        logger.warning(f"  [{pid[:25]}] Lookup FAILED: LLM returned no result (timeout/error)")
+        # 记录提取错误，供 postprocess 区分"超时"和"无数据"
+        if "extraction_errors" not in state:
+            state["extraction_errors"] = []
+        state["extraction_errors"].append({
+            "study_index": -1,
+            "study_title": "Lookup补充查找",
+            "error": "LLM提取超时或无返回",
+        })
+        return {
+            "lookup_results": [],
+            "extraction_errors": state.get("extraction_errors", []),
+            "status": "lookup_failed",
+        }
 
     lookup_results = result.get("lookup_results", [])
     logger.info(f"  [{pid[:25]}] Lookup done: {len(lookup_results)} results")

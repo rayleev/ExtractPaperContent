@@ -256,11 +256,19 @@ def extract_phase2_node(
                 )
             else:
                 logger.warning(
-                    f"  [{pid[:25]}] Study {i+1}/{len(studies)}: '{study_title[:40]}' → FAILED"
+                    f"  [{pid[:25]}] Study {i+1}/{len(studies)}: '{study_title[:40]}' → FAILED (LLM超时/无返回)"
                 )
                 phase2_results.append({
                     "study_index": i,
                     "varieties": [],
+                })
+                # 记录提取错误，供 postprocess 区分"超时"和"无数据"
+                if "extraction_errors" not in state:
+                    state["extraction_errors"] = []
+                state["extraction_errors"].append({
+                    "study_index": i,
+                    "study_title": study_title[:60],
+                    "error": "LLM提取超时或无返回",
                 })
         logger.info(f"  [{pid[:25]}] Phase 2: done, {len(phase2_results)} study/studies processed")
     else:
@@ -309,15 +317,24 @@ def extract_phase2_node(
                 )
             else:
                 logger.warning(
-                    f"  [{pid[:25]}] Study {i+1}/{len(actual_exp_sections)}: '{study_title[:40]}' → FAILED"
+                    f"  [{pid[:25]}] Study {i+1}/{len(actual_exp_sections)}: '{study_title[:40]}' → FAILED (LLM超时/无返回)"
                 )
                 phase2_results.append({
                     "study_index": i,
                     "varieties": [],
                 })
+                # 记录提取错误，供 postprocess 区分"超时"和"无数据"
+                if "extraction_errors" not in state:
+                    state["extraction_errors"] = []
+                state["extraction_errors"].append({
+                    "study_index": i,
+                    "study_title": study_title[:60],
+                    "error": "LLM提取超时或无返回",
+                })
         logger.info(f"  [{pid[:25]}] Phase 2: done, {len(phase2_results)} study/studies processed")
 
     return {
         "phase2_results": phase2_results,
+        "extraction_errors": state.get("extraction_errors", []),
         "status": "phase2_done",
     }

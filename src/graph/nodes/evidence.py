@@ -130,7 +130,22 @@ def evidence_node(
     )
 
     result = llm.call_json(prompt, max_tokens=config.llm.evidence_max_tokens, node_name="evidence")
-    evidence_nodes = result.get("evidence_nodes", []) if result else []
+    if not result:
+        logger.warning(f"  [{pid[:25]}] Evidence FAILED: LLM returned no result (timeout/error)")
+        # 记录错误，供后续节点判断
+        if "validation_errors" not in state:
+            state["validation_errors"] = []
+        state["validation_errors"].append({
+            "node": "evidence",
+            "error": "LLM验证超时或无返回",
+        })
+        return {
+            "evidence_nodes": [],
+            "validation_errors": state.get("validation_errors", []),
+            "status": "evidence_failed",
+        }
+
+    evidence_nodes = result.get("evidence_nodes", [])
 
     logger.info(f"  [{pid[:25]}] Evidence: {len(evidence_nodes)} fields verified")
 

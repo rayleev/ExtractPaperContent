@@ -407,6 +407,16 @@ class BatchOrchestrator:
                 errs = result.get("errors", [])
                 if errs:
                     skip_reason = str(errs[-1].get("error", ""))[:500]
+                
+                # 补充提取超时和验证超时信息
+                extraction_errors = result.get("extraction_errors", [])
+                validation_errors = result.get("validation_errors", [])
+                if extraction_errors:
+                    skip_reason += f" | 提取超时: {len(extraction_errors)}个节点"
+                if validation_errors:
+                    skip_reason += f" | 验证超时: {len(validation_errors)}个节点"
+                skip_reason = skip_reason[:500]
+                
                 update_paper_status(
                     conn, pid, title, target_step,
                     "skipped", duration, error_message=skip_reason,
@@ -418,6 +428,16 @@ class BatchOrchestrator:
                 self.stats["failed"] += 1
                 errors = result.get("errors", [])
                 error_msg = str(errors[-1].get("error", status))[:500] if errors else status
+                
+                # 补充提取超时和验证超时信息
+                extraction_errors = result.get("extraction_errors", [])
+                validation_errors = result.get("validation_errors", [])
+                if extraction_errors:
+                    error_msg += f" | 提取超时: {len(extraction_errors)}个节点"
+                if validation_errors:
+                    error_msg += f" | 验证超时: {len(validation_errors)}个节点"
+                error_msg = error_msg[:500]
+                
                 update_paper_status(
                     conn, pid, title, target_step,
                     "failed", duration, error_msg, self.config.run_id,

@@ -226,6 +226,13 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
                 filter_parts.append(f"非大田试验({removed_field})")
             if removed_yield:
                 filter_parts.append(f"无产量数据({removed_yield})")
+            
+            # 检查是否有 LLM 提取错误（超时/无返回）
+            extraction_errors = state.get("extraction_errors", [])
+            if extraction_errors:
+                error_studies = ", ".join([e.get("study_title", "")[:30] for e in extraction_errors[:3]])
+                filter_parts.append(f"LLM提取超时({len(extraction_errors)}个study: {error_studies})")
+            
             reason = "、".join(filter_parts) if filter_parts else "所有 study 在后续处理中被过滤"
             logger.info(f"  [{pid[:25]}] Postprocess SKIP: {reason}")
             return {
@@ -238,5 +245,7 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
 
     return {
         "extraction": extraction,
+        "extraction_errors": state.get("extraction_errors", []),
+        "validation_errors": state.get("validation_errors", []),
         "status": "postprocessed",
     }

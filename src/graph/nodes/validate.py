@@ -124,7 +124,19 @@ def targeted_llm_validate_node(
         )
 
         result = llm.call_json(prompt, max_tokens=config.llm.validate_max_tokens, node_name="targeted_validate")
-        if result and result.get("verified"):
+        if not result:
+            logger.warning(f"  [{pid[:25]}] Validate LLM failed for {vname} (timeout/error)")
+            # 记录验证错误
+            if "validation_errors" not in state:
+                state["validation_errors"] = []
+            state["validation_errors"].append({
+                "node": "targeted_validate",
+                "study_index": si,
+                "variety_index": vi,
+                "variety_name": vname,
+                "error": "LLM验证超时或无返回",
+            })
+        elif result and result.get("verified"):
             verified_count += 1
         elif result and not result.get("verified"):
             reason = result.get("reason", "")
@@ -136,4 +148,7 @@ def targeted_llm_validate_node(
 
     logger.info(f"  [{pid[:25]}] Targeted validation: {verified_count}/{len(flagged)} verified")
 
-    return {"status": "validated_complete"}
+    return {
+        "status": "validated_complete",
+        "validation_errors": state.get("validation_errors", []),
+    }

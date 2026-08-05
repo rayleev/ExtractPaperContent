@@ -45,6 +45,10 @@ class PaperState(TypedDict, total=False):
 
     # ── extract_phase2 节点 ──
     phase2_results: list                # [{study_index, varieties}, ...]
+    extraction_errors: list              # [{study_index, study_title, error}, ...] LLM提取超时/无返回记录
+
+    # ── evidence/validate 节点 ──
+    validation_errors: list             # [{node, study_index, variety_index, variety_name, error}, ...] LLM验证超时记录
 
     # ── lookup 节点（动态，needs_lookup=True 时触发）──
     lookup_results: list                # lookup 节点输出（补充后的信息）

@@ -130,9 +130,18 @@ parse 节点未成功，请自行理解论文内容。
                 f"parse={'success' if parse_success else 'failed'}, calling LLM (max_tokens={config.llm.max_tokens})...")
     result = llm.call_json(prompt, max_tokens=config.llm.max_tokens, node_name="extract_phase1")
     if not result:
-        logger.warning(f"  [{pid[:25]}] Phase1 FAILED: LLM returned no result")
+        logger.warning(f"  [{pid[:25]}] Phase1 FAILED: LLM returned no result (timeout/error)")
+        # 记录提取错误，供 postprocess 区分"超时"和"无数据"
+        if "extraction_errors" not in state:
+            state["extraction_errors"] = []
+        state["extraction_errors"].append({
+            "study_index": -1,
+            "study_title": "Phase1全文提取",
+            "error": "LLM提取超时或无返回",
+        })
         return {
             "phase1_result": {"paper": {}, "studies": []},
+            "extraction_errors": state.get("extraction_errors", []),
             "status": "phase1_failed",
         }
 
