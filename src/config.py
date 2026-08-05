@@ -276,6 +276,9 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         temperature=l.get("temperature", _get_default(LLMConfig, "temperature")),
         max_retries=l.get("max_retries", _get_default(LLMConfig, "max_retries")),
         timeout=l.get("timeout", _get_default(LLMConfig, "timeout")),
+        classify_max_tokens=l.get("classify_max_tokens", _get_default(LLMConfig, "classify_max_tokens")),
+        evidence_max_tokens=l.get("evidence_max_tokens", _get_default(LLMConfig, "evidence_max_tokens")),
+        validate_max_tokens=l.get("validate_max_tokens", _get_default(LLMConfig, "validate_max_tokens")),
         thinking=l.get("thinking", _get_default(LLMConfig, "thinking")),
         thinking_overrides=l.get("thinking_overrides", _get_default(LLMConfig, "thinking_overrides")),
     )

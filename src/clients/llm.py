@@ -110,6 +110,14 @@ class LLMClient:
                     f"{elapsed:.1f}s, model={self.config.model}"
                 )
                 return content
+            except requests.exceptions.Timeout as e:
+                # 超时直接失败，不再重试（避免卡住）
+                elapsed = time.time() - t0
+                logger.error(
+                    f"  LLM TIMEOUT ({elapsed:.1f}s, prompt={prompt_chars} chars): {e} — "
+                    f"aborting retries to avoid hanging"
+                )
+                return None
             except Exception as e:
                 elapsed = time.time() - t0
                 logger.warning(

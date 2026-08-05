@@ -38,7 +38,7 @@ llm:
   max_tokens: 16384                # 默认输出上限（token）
   temperature: 0.1
   max_retries: 5
-  timeout: 600                     # 请求超时时间（秒）
+  timeout: 1800                    # 请求超时时间（秒）— parse/extract 大论文需要更长
   classify_max_tokens: 1000        # 分类节点输出上限
   evidence_max_tokens: 2000        # 证据验证节点输出上限
   validate_max_tokens: 200         # 规则验证节点输出上限

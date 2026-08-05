@@ -416,7 +416,8 @@ class BatchOrchestrator:
                 delete_pdf_missing(conn, pid)
             else:
                 self.stats["failed"] += 1
-                error_msg = str(result.get("errors", [{}])[-1].get("error", status))[:500]
+                errors = result.get("errors", [])
+                error_msg = str(errors[-1].get("error", status))[:500] if errors else status
                 update_paper_status(
                     conn, pid, title, target_step,
                     "failed", duration, error_msg, self.config.run_id,
