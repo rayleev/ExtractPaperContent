@@ -101,9 +101,8 @@ class GeocodingConfig:
 
 @dataclass
 class ConcurrencyConfig:
-    classify_workers: int = 5
-    parse_workers: int = 8
-    extract_workers: int = 3
+    extract_workers: int = 2
+
 
 
 @dataclass
@@ -310,8 +309,6 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     # ── 并发 ──
     c = raw.get("concurrency", {})
     concurrency = ConcurrencyConfig(
-        classify_workers=c.get("classify_workers", _get_default(ConcurrencyConfig, "classify_workers")),
-        parse_workers=c.get("parse_workers", _get_default(ConcurrencyConfig, "parse_workers")),
         extract_workers=c.get("extract_workers", _get_default(ConcurrencyConfig, "extract_workers")),
     )
 

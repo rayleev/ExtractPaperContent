@@ -332,9 +332,7 @@ geocoding:
 
 # 并发控制
 concurrency:
-  classify_workers: 5
-  parse_workers: 8
-  extract_workers: 5                    # 滑动窗口并发论文数
+  extract_workers: 2                    # 并发论文数（同时跑的论文数）
 
 # PostgreSQL 数据库
 database:
