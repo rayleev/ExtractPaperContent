@@ -47,14 +47,17 @@ def filter_node(state: PaperState, config: AppConfig) -> dict:
     target_crops = config.extraction.crops  # 如 ["水稻/Rice", "玉米/Maize"]
 
     if crops and target_crops:
-        # 标准化作物名称（去除空格）后比较
-        def normalize_crop(crop):
-            return crop.replace(" ", "").lower()
+        def crop_matches(crop_str: str, target_str: str) -> bool:
+            crop_lower = crop_str.lower().replace(" ", "")
+            target_lower = target_str.lower().replace(" ", "")
+            if crop_lower == target_lower:
+                return True
+            crop_parts = set(crop_lower.split("/"))
+            target_parts = set(target_lower.split("/"))
+            return bool(crop_parts & target_parts)
 
-        normalized_targets = [normalize_crop(c) for c in target_crops]
-        # 检查是否有交集（论文包含任一目标作物即放行）
         has_target = any(
-            normalize_crop(crop) in normalized_targets
+            any(crop_matches(crop, target) for target in target_crops)
             for crop in crops
         )
         if not has_target:

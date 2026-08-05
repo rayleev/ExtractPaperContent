@@ -140,7 +140,7 @@
   "reasoning": "简要说明判断依据（1-2句话）",
   "key_signals": ["列出支持分类的关键信号"],
   "crop_species": "从目标作物列表中选择: {crop_list} | 多作物 | 不适用",
-  "crops": ["从目标作物列表中选择所有涉及的作物，如 水稻 / Rice, 玉米 / Maize"],
+  "crops": ["从目标作物列表中选择所有涉及的作物，如 水稻/Rice, 玉米/Maize"],
   "paper_type": "期刊论文 | 学位论文 | 综述 | 会议论文 | 其他",
   "has_yield_data": true/false,
   "research_country": "China | 其他国家名 | Unknown"
