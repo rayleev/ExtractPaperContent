@@ -79,8 +79,8 @@ def validate_extraction(extraction: dict, paper_meta: dict, config=None, categor
         # ── Study 级检查 ──
 
         # 对照品种存在性（management_yield 中对照处理非必须，跳过检查）
+        ck_varieties = [v for v in varieties if v.get("is_check_variety")]
         if category != "management_yield":
-            ck_varieties = [v for v in varieties if v.get("is_check_variety")]
             if not ck_varieties and varieties:
                 warnings.append({"code": "CK_001", "message": f"{prefix}: 缺少对照品种"})
 
