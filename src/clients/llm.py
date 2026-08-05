@@ -77,12 +77,13 @@ class LLMClient:
         }
         thinking = self._resolve_thinking(node_name)
         if thinking is not None:
-            payload["thinking"] = thinking
+            # 使用 chat_template_kwargs 格式（CC映射代理只接受此格式）
+            payload["chat_template_kwargs"] = thinking
         prompt_chars = len(prompt)
         logger.debug(
             f"  LLM payload: model={payload['model']}, "
             f"max_tokens={payload['max_tokens']}, "
-            f"thinking={payload.get('thinking', 'NOT_SET')}, "
+            f"chat_template_kwargs={payload.get('chat_template_kwargs', 'NOT_SET')}, "
             f"node={node_name}"
         )
         for attempt in range(1, self.config.max_retries + 1):

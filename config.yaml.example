@@ -43,10 +43,11 @@ llm:
   evidence_max_tokens: 2000        # 证据验证节点输出上限
   validate_max_tokens: 200         # 规则验证节点输出上限
   # 深度思考（thinking）配置 — 仅 GLM-5 等支持 thinking 的模型生效
-  # thinking: {"type": "disabled"}  # 全局关闭深度思考
-  # thinking_overrides:             # 节点级覆盖（优先级高于全局）
-  #   parse: {"type": "enabled"}     # parse 节点开启
-  #   extract_phase2: {"type": "enabled"}  # 品种提取节点开启
+  # 使用 chat_template_kwargs 格式（CC映射代理只接受此格式）
+  thinking: {"enable_thinking": false}  # 全局关闭深度思考
+  thinking_overrides:               # 节点级覆盖（优先级高于全局）
+    parse: {"enable_thinking": false}  # parse 节点关闭
+    extract_phase2: {"enable_thinking": false}  # 品种提取节点关闭
 
 # 提取参数
 extraction:

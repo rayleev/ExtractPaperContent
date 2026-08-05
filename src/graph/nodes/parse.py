@@ -395,6 +395,21 @@ def parse_node(
     # ── 质量门控 ──
     parse_quality = _check_parse_quality(doc_context, extraction_hints, pid)
 
+    # 质量不达标时标记为 failed，避免后续节点空跑
+    if parse_quality.get("overall") == "failed":
+        return {
+            "parsed_text": md_text,
+            "tree_outline": outline,
+            "abstract_text": abstract_text[:5000],
+            "methods_text": methods_text[:15000],
+            "doc_context": {},
+            "extraction_hints": [],
+            "needs_lookup": False,
+            "parse_quality": parse_quality,
+            "status": "failed",
+            "errors": [{"node": "parse", "error": "LLM understanding failed or quality too weak"}],
+        }
+
     return {
         "parsed_text": md_text,
         "tree_outline": outline,

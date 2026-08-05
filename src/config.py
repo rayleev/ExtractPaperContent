@@ -68,9 +68,9 @@ class LLMConfig:
     evidence_max_tokens: int = 2000
     validate_max_tokens: int = 200
     # 深度思考（thinking）配置
-    # 全局默认：空 dict = 不传（API 默认行为）；{"type": "disabled"} = 关闭；{"type": "enabled"} = 开启
-    thinking: dict = field(default_factory=dict)
-    # 节点级覆盖：键为节点名，值为 thinking 配置。优先级高于全局 thinking
+    # 使用 chat_template_kwargs 格式：{"enable_thinking": true/false}
+    # CC映射代理只接受此格式
+    thinking: dict = field(default_factory=lambda: {"enable_thinking": False})
     thinking_overrides: dict = field(default_factory=dict)
 
 
