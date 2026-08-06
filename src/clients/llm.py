@@ -87,6 +87,7 @@ class LLMClient:
             f"node={node_name}"
         )
         for attempt in range(1, self.config.max_retries + 1):
+            data = None  # 异常路径可能在任何赋值前触发，须预先初始化
             try:
                 t0 = time.time()
                 resp = requests.post(
