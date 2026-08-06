@@ -30,9 +30,10 @@
     {{
       "field": "字段名",
       "value": "字段值",
-      "study_index": 0,
-      "variety_index": 0,
-      "treatment_name": "处理名称（如'N180'、'CK'，无则填null）",
+      "level": "paper / study / variety",
+      "study_index": "S_01 / S_02",
+      "variety_index": "V_01 / V_02",
+      "treatment_name": "处理名称（无则填 ''）",
       "source_location": "来源位置（如'摘要'、'表3'、'3.2.3节'）",
       "source_text": "原文片段（50-200字）",
       "confidence": "high/medium/low",
@@ -49,28 +50,55 @@
 - source_text 必须是论文中的原文片段
 - confidence 表示证据的可靠程度：high=直接引用，medium=推断，low=不确定
 - verified 表示证据是否通过验证
-- **study_index 必须与输入中的 study_index 对应**，用于标识证据属于哪个试验
-- **variety_index 必须与输入中的 variety_index 对应**，用于标识证据属于哪个品种（同一品种不同处理共享同一 index）
-- **treatment_name** 用于标识证据属于哪个处理水平，management_yield 论文必填，varietal_yield 论文可为 null
+- **level** 标识字段层级：`paper`（论文级）、`study`（试验级）、`variety`（品种级），必须与输入中的 level 一致
+- **study_index / variety_index / treatment_name** 必须与输入中对应字段的值一致（即使为空字符串也要原样返回，不能改为 null）
 
 ---
 
 ## 正确示例
 
-### 示例 1：候选证据正确
+### 示例 1：论文级字段
 
-字段：variety_name = "辽梗375"
-候选证据：原文 "供试品种为辽梗375、郑单978"
+输入字段：level=paper, study_index="", variety_index="", treatment_name="", field=crop_species, value="水稻 / Rice"
 
 输出：
 ```json
 {{
   "evidence_nodes": [
     {{
-      "field": "variety_name",
-      "value": "辽梗375",
+      "field": "crop_species",
+      "value": "水稻 / Rice",
+      "level": "paper",
+      "study_index": "",
+      "variety_index": "",
+      "treatment_name": "",
+      "source_location": "标题",
+      "source_text": "新型四倍体水稻产量评价及基因组变异分析",
+      "confidence": "high",
+      "verified": true,
+      "reason": "论文标题和全文均围绕水稻展开"
+    }}
+  ]
+}}
+```
+
+### 示例 2：试验级字段（候选证据正确）
+
+输入字段：level=study, study_index="S_01", variety_index="", treatment_name="", field=trial_year, value="2020"
+
+输出：
+```json
+{{
+  "evidence_nodes": [
+    {{
+      "field": "trial_year",
+      "value": "2020",
+      "level": "study",
+      "study_index": "S_01",
+      "variety_index": "",
+      "treatment_name": "",
       "source_location": "材料方法",
-      "source_text": "供试品种为辽梗375、郑单978",
+      "source_text": "试验于2020年在南京农业大学农场进行",
       "confidence": "high",
       "verified": true,
       "reason": "候选证据正确"
@@ -79,10 +107,9 @@
 }}
 ```
 
-### 示例 2：候选证据错误，LLM 纠正
+### 示例 3：品种级字段（候选证据错误，LLM 纠正）
 
-字段：variety_name = "辽梗375"
-候选证据：原文 "供试品种为郑单978"（错误）
+输入字段：level=variety, study_index="S_01", variety_index="V_01", treatment_name="N180", field=variety_name, value="辽梗375"
 
 输出：
 ```json
@@ -91,6 +118,10 @@
     {{
       "field": "variety_name",
       "value": "辽梗375",
+      "level": "variety",
+      "study_index": "S_01",
+      "variety_index": "V_01",
+      "treatment_name": "N180",
       "source_location": "表3",
       "source_text": "辽梗375 612.5 kg/亩",
       "confidence": "high",
@@ -113,3 +144,9 @@
 
 ❌ 错误：verified=true，但 source_text 与 value 不匹配
 ✅ 正确：verified 必须基于 source_text 与 value 的一致性
+
+❌ 错误：paper 级字段的 variety_index 返回 null
+✅ 正确：variety_index 必须与输入一致（空字符串就返回空字符串 ""）
+
+❌ 错误：treatment_name 返回 null
+✅ 正确：treatment_name 无值时必须返回空字符串 ""，不能返回 null

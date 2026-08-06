@@ -339,11 +339,11 @@ def insert_extraction(conn, result: dict, paper_id: str):
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 paper_id,
-                ev.get("study_index"),
-                ev.get("variety_index"),
+                ev.get("study_index") or "",
+                ev.get("variety_index") or "",
                 ev.get("field", ""),
                 str(ev.get("value", ""))[:500],
-                ev.get("treatment_name"),
+                ev.get("treatment_name") or "",
                 ev.get("source_location", ""),
                 ev.get("source_text", ""),
                 ev.get("confidence", ""),

@@ -26,22 +26,21 @@ from src.graph.output import _format_study_index, _format_variety_index, _build_
 
 
 def _collect_field_values(extraction: dict, field_name: str):
-    """从 extraction 中收集字段值，返回 [(study_index, variety_index, value, treatment_name), ...]"""
+    """从 extraction 中收集字段值，返回 [(study_index, variety_index, value, treatment_name, level), ...]"""
     results = []
 
     # paper 级字段
     paper = extraction.get("paper", {})
     if field_name in paper:
-        results.append(("", "", paper[field_name], None))
+        results.append(("", "", paper[field_name], None, "paper"))
         return results
 
     # study 级和 variety 级字段
     studies = extraction.get("studies", [])
-    # 预计算 variety_index 映射（按品种名分组）
     for si, study in enumerate(studies):
         study_idx = _format_study_index(si)
         if field_name in study:
-            results.append((study_idx, "", study[field_name], None))
+            results.append((study_idx, "", study[field_name], None, "study"))
 
         varieties = study.get("varieties", [])
         variety_index_map = _build_variety_index_map(varieties)
@@ -51,7 +50,7 @@ def _collect_field_values(extraction: dict, field_name: str):
                 vn = v.get("variety_name", "")
                 vi = _format_variety_index(variety_index_map.get(vn, 0))
                 treatment_name = v.get("treatment_name")
-                results.append((study_idx, vi, v[field_name], treatment_name))
+                results.append((study_idx, vi, v[field_name], treatment_name, "variety"))
 
     return results
 
@@ -117,22 +116,19 @@ def evidence_node(
         field_name = field_cfg.field
         values = _collect_field_values(extraction, field_name)
 
-        for si, vi, value, treatment_name in values:
+        for si, vi, value, treatment_name, level in values:
             candidate = _find_evidence_from_hints(field_name, value, extraction_hints)
 
             field_info = {
                 "field": field_name,
                 "value": value,
+                "level": level,
                 "required": field_cfg.required,
                 "description": field_cfg.description,
             }
-            if si:
-                field_info["study_index"] = si
-            if vi:
-                field_info["variety_index"] = vi
-            if treatment_name:
-                field_info["treatment_name"] = treatment_name
-
+            field_info["study_index"] = si
+            field_info["variety_index"] = vi
+            field_info["treatment_name"] = treatment_name or ""
             field_values.append(field_info)
             candidates.append(candidate or {"location": "unknown", "text": ""})
 
