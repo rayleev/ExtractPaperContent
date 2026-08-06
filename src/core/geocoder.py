@@ -54,6 +54,9 @@ class Geocoder:
         self._cache: dict = {}
         self._cache_file: Optional[Path] = None
         self._enabled = True
+        # 缓存写盘优化：仅在累积 N 条新结果或显式 flush 时写盘，避免每次 geocode 都全量写
+        self._cache_dirty_count: int = 0
+        self._cache_flush_threshold: int = 50
         # 默认服务地址（config 未提供时使用）
         self._tianditu_url = "https://api.tianditu.gov.cn/geocoder"
         self._baidu_url = "https://api.map.baidu.com/geocoding/v3/"
@@ -105,7 +108,9 @@ class Geocoder:
 
         if self._cache is not None:
             self._cache[cache_key] = result.to_dict() if result else None
-            self._save_cache()
+            self._cache_dirty_count += 1
+            if self._cache_dirty_count >= self._cache_flush_threshold:
+                self._save_cache()
 
         return result
 
@@ -284,6 +289,12 @@ class Geocoder:
             self._cache_file.parent.mkdir(parents=True, exist_ok=True)
             with open(self._cache_file, "w", encoding="utf-8") as f:
                 json.dump(self._cache, f, ensure_ascii=False, indent=2)
+            self._cache_dirty_count = 0
+
+    def flush_cache(self):
+        """显式刷盘：在批次结束时调用，确保剩余 dirty 项落盘。"""
+        if self._cache_dirty_count > 0:
+            self._save_cache()
 
 
 # ── Pipeline 集成函数 ────────────────────────────────────
@@ -368,6 +379,9 @@ def geocode_extractions(extractions: List[dict], geocoder: Geocoder) -> List[dic
                 study["geo_source"] = "unknown"
                 failed += 1
                 logger.warning(f"    Geocode FAILED: region='{region}', site='{site}'")
+
+    # 批次结束显式刷盘，确保未达阈值的剩余 dirty 项落盘
+    geocoder.flush_cache()
 
     logger.info(f"Geocoding complete: {geocoded} geocoded, {skipped} already filled, {failed} failed (total {total_studies} studies)")
     return extractions

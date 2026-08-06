@@ -119,10 +119,11 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
             # 轻量 DB 连接（搜索入库需要，DDL 已在 startup 完成）
             from src.graph.output import get_connection
             search_conn = get_connection(config.database.connection_string)
-
-            empty_state: PaperState = {"paper_id": "", "paper_meta": {}, "status": "pending", "errors": []}
-            search_result = search_node(empty_state, config, ss_client, db_conn=search_conn, limit=request.limit)
-            search_conn.close()
+            try:
+                empty_state: PaperState = {"paper_id": "", "paper_meta": {}, "status": "pending", "errors": []}
+                search_result = search_node(empty_state, config, ss_client, db_conn=search_conn, limit=request.limit)
+            finally:
+                search_conn.close()
 
             if search_result.get("status") == "search_empty":
                 _update_job(job_id,
@@ -257,8 +258,10 @@ def _run_import(job_id: str, ss_paper_ids: list):
         )
 
         conn = get_connection(config.database.connection_string)
-        result = import_papers_by_ids(ss_paper_ids, config, ss_client, conn)
-        conn.close()
+        try:
+            result = import_papers_by_ids(ss_paper_ids, config, ss_client, conn)
+        finally:
+            conn.close()
 
         # failed_ids 可能很大，写入 job stats 时只保留前 100 个作样本
         stats = {k: v for k, v in result.items() if k != "failed_ids"}
@@ -383,15 +386,17 @@ def stop_pipeline():
         config = load_config()
         instance_id = os.environ.get("INSTANCE_ID", "default")
         conn = get_connection(config.database.connection_string)
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE pe_reg_paper_status SET status = 'pending', claimed_by = NULL, updated_at = %s "
-                "WHERE status = 'processing' AND claimed_by = %s",
-                (datetime.now().isoformat(), instance_id),
-            )
-            reset_count = cur.rowcount
-        conn.commit()
-        conn.close()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE pe_reg_paper_status SET status = 'pending', claimed_by = NULL, updated_at = %s "
+                    "WHERE status = 'processing' AND claimed_by = %s",
+                    (datetime.now().isoformat(), instance_id),
+                )
+                reset_count = cur.rowcount
+            conn.commit()
+        finally:
+            conn.close()
         logger.info(f"Reset {reset_count} processing papers to pending (instance={instance_id})")
     except Exception as e:
         logger.error(f"Failed to reset processing papers: {e}")
@@ -434,14 +439,17 @@ def get_stats():
     from src.graph.output import get_connection, get_table_stats
 
     config = load_config()
+    conn = None
     try:
         conn = get_connection(config.database.connection_string)
         stats = get_table_stats(conn)
-        conn.close()
         return TableStats(**stats)
     except Exception as e:
         logger.error(f"Stats query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 @router.get("/progress", response_model=ProgressResponse)
@@ -457,14 +465,17 @@ def get_progress():
     from src.graph.output import get_connection, get_progress as _get_progress
 
     config = load_config()
+    conn = None
     try:
         conn = get_connection(config.database.connection_string)
         progress = _get_progress(conn)
-        conn.close()
         return ProgressResponse(**progress)
     except Exception as e:
         logger.error(f"Progress query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 @router.get("/status", response_model=list[PaperStatusResponse])
@@ -482,6 +493,7 @@ def get_paper_statuses(
     from src.graph.output import get_connection
 
     config = load_config()
+    conn = None
     try:
         conn = get_connection(config.database.connection_string)
         with conn.cursor() as cur:
@@ -498,7 +510,6 @@ def get_paper_statuses(
                     (limit,),
                 )
             rows = cur.fetchall()
-        conn.close()
 
         return [
             PaperStatusResponse(
@@ -511,6 +522,9 @@ def get_paper_statuses(
     except Exception as e:
         logger.error(f"Paper status query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 @router.get("/status/{paper_id}/detail", response_model=PaperStatusResponse)
@@ -520,6 +534,7 @@ def get_paper_status(paper_id: str):
     from src.graph.output import get_connection
 
     config = load_config()
+    conn = None
     try:
         conn = get_connection(config.database.connection_string)
         with conn.cursor() as cur:
@@ -529,7 +544,6 @@ def get_paper_status(paper_id: str):
                 (paper_id,),
             )
             row = cur.fetchone()
-        conn.close()
 
         if not row:
             raise HTTPException(status_code=404, detail=f"Paper '{paper_id}' not found")
@@ -544,3 +558,6 @@ def get_paper_status(paper_id: str):
     except Exception as e:
         logger.error(f"Paper status query failed: {e}")
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
+    finally:
+        if conn is not None:
+            conn.close()

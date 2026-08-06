@@ -125,7 +125,7 @@ class LLMClient:
                     f"  LLM attempt {attempt}/{self.config.max_retries} failed "
                     f"({elapsed:.1f}s, prompt={prompt_chars} chars): {e}"
                 )
-                if 'data' in dir() and data:
+                if data:
                     logger.debug(f"  LLM response data: {str(data)[:500]}")
                 if attempt < self.config.max_retries:
                     time.sleep(min(3 * (2 ** attempt), 60))

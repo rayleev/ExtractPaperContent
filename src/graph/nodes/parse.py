@@ -38,7 +38,7 @@ def _understand_document_full_text(
     abstract_text: str,
     methods_text: str,
     llm: LLMClient,
-    config: 'src.config.ParseConfig',
+    config: AppConfig,
     max_tokens_override: int = 0,
 ) -> Optional[dict]:
     """一次性给全文，LLM 理解（适用于短论文）。"""
@@ -62,7 +62,7 @@ def _understand_document_chunked(
     abstract_text: str,
     methods_text: str,
     llm: LLMClient,
-    config: 'src.config.ParseConfig',
+    config: AppConfig,
     max_tokens_override: int = 0,
 ) -> Optional[dict]:
     """分段理解 + 合并（适用于长论文 + 有章节标题）。"""
@@ -104,7 +104,7 @@ def _understand_document_sliding_window(
     abstract_text: str,
     methods_text: str,
     llm: LLMClient,
-    config: 'src.config.ParseConfig',
+    config: AppConfig,
     max_tokens_override: int = 0,
 ) -> Optional[dict]:
     """滑动窗口 + 合并（适用于长论文 + 无章节标题）。"""
@@ -169,7 +169,7 @@ def _understand_document(
     abstract_text: str,
     methods_text: str,
     llm: LLMClient,
-    config: 'src.config.ParseConfig',
+    config: AppConfig,
     max_tokens_override: int = 0,
 ) -> Optional[dict]:
     """
@@ -217,7 +217,7 @@ def _understand_document(
 
     # 兜底：一次性给全文（可能超上下文，但总比失败好）
     return _understand_document_full_text(
-        md_text, tree_outline, abstract_text, methods_text, llm,
+        md_text, tree_outline, abstract_text, methods_text, llm, config,
         max_tokens_override=max_tokens_override,
     )
 

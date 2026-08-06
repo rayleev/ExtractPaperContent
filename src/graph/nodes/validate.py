@@ -142,9 +142,17 @@ def targeted_llm_validate_node(
             reason = result.get("reason", "")
             correct_value = result.get("correct_value", "")
             logger.info(f"  [{pid[:25]}] LLM flagged {vname}: {reason}")
-            # 如果有正确值，可以回填
-            if correct_value:
-                v["variety_name"] = correct_value
+            # 记录验证错误，供人工复核（不自动覆盖，避免 correct_value 语义不明导致数据污染）
+            if "validation_errors" not in state:
+                state["validation_errors"] = []
+            state["validation_errors"].append({
+                "node": "targeted_validate",
+                "study_index": si,
+                "variety_index": vi,
+                "variety_name": vname,
+                "reason": reason,
+                "correct_value": correct_value,
+            })
 
     logger.info(f"  [{pid[:25]}] Targeted validation: {verified_count}/{len(flagged)} verified")
 

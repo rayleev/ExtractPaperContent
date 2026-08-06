@@ -185,12 +185,16 @@ def build_paper_graph(
     geocoder: Geocoder,
     ss_client: Optional[SemanticScholarClient] = None,
     checkpoint_path: Optional[str] = None,
-) -> StateGraph:
+) -> tuple:
     """
     构建单篇论文的 StateGraph。
 
     每个节点都包装了计时器，日志中会显示各节点执行耗时。
     支持通过 PaperState.stop_after 字段控制分步执行。
+
+    Returns:
+        (compiled_graph, sqlite_conn) — sqlite_conn 可能为 None（未启用 checkpoint）。
+        调用方在使用完毕后应关闭 sqlite_conn 以避免资源泄漏。
     """
     graph = StateGraph(PaperState)
 
@@ -260,10 +264,11 @@ def build_paper_graph(
 
     # ── Checkpoint ──
     checkpointer = None
+    sqlite_conn = None
     if checkpoint_path:
         import sqlite3
-        conn = sqlite3.connect(checkpoint_path, check_same_thread=False)
-        checkpointer = SqliteSaver(conn)
+        sqlite_conn = sqlite3.connect(checkpoint_path, check_same_thread=False)
+        checkpointer = SqliteSaver(sqlite_conn)
 
     compiled = graph.compile(checkpointer=checkpointer)
-    return compiled
+    return compiled, sqlite_conn

@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -171,11 +172,11 @@ class BatchOrchestrator:
                         completed_registry,
                     )
                     futures[future] = paper
-                    submit_times[future] = _time.time()
+                    submit_times[future] = time.time()
 
                 for future in as_completed(futures):
                     paper = futures[future]
-                    duration = _time.time() - submit_times.get(future, _time.time())
+                    duration = time.time() - submit_times.get(future, time.time())
                     try:
                         result = future.result()
                         self._handle_paper_result(result, paper, target_step, duration)
@@ -197,16 +198,12 @@ class BatchOrchestrator:
 
             self.stats["finished_at"] = datetime.now().isoformat()
 
-            # ── 批次完成后：写入分类、验证报告，生成统计 ──
+            # ── 批次完成后：写入验证报告、生成统计 ──
             # 复用批次级连接进行汇总操作
+            # 注：分类结果已在 _handle_paper_result 中实时入库，无需重写
             conn = self._get_batch_connection()
             if target_step == "extract" and self._completed_results:
                 self._generate_outputs(conn, classifications)
-            elif target_step == "classify" and self._completed_results:
-                # 仅分类步骤：写入分类表
-                cls_records = [r.get("classification") for r in self._completed_results if r.get("classification")]
-                if cls_records:
-                    insert_classification(conn, cls_records)
 
             # 打印 DB 统计
             try:
@@ -280,7 +277,7 @@ class BatchOrchestrator:
             self._clear_checkpoint(pid)
 
         # 构建 graph（每篇论文独立实例，共享 checkpoint）
-        graph = build_paper_graph(
+        graph, sqlite_conn = build_paper_graph(
             config=self.config,
             llm=self.llm,
             mineru_client=self.mineru_client,
@@ -305,13 +302,19 @@ class BatchOrchestrator:
                 for node_name, node_output in event.items():
                     if isinstance(node_output, dict):
                         initial_state.update(node_output)
-
         except Exception as e:
             logger.error(f"  [{pid[:25]}] Graph execution failed: {e}", exc_info=True)
             initial_state["status"] = "failed"
             initial_state["errors"] = initial_state.get("errors", []) + [
                 {"node": "graph", "error": str(e), "timestamp": datetime.now().isoformat()}
             ]
+        finally:
+            # 关闭 checkpoint SQLite 连接，避免资源泄漏
+            if sqlite_conn is not None:
+                try:
+                    sqlite_conn.close()
+                except Exception:
+                    pass
 
         return initial_state
 
@@ -473,8 +476,6 @@ class BatchOrchestrator:
         Returns:
             处理统计字典。
         """
-        import time as _time
-
         self.stats["started_at"] = datetime.now().isoformat()
         target_step = self.stop_after if self.stop_after in self._STEP_ORDER else "extract"
 
@@ -557,11 +558,11 @@ class BatchOrchestrator:
                             self._process_one_paper, paper, None, {},
                         )
                         futures[future] = paper
-                        submit_times[future] = _time.time()
+                        submit_times[future] = time.time()
 
                     for future in as_completed(futures):
                         paper = futures[future]
-                        duration = _time.time() - submit_times.get(future, _time.time())
+                        duration = time.time() - submit_times.get(future, time.time())
                         try:
                             result = future.result()
                             self._handle_paper_result(result, paper, target_step, duration)
@@ -673,8 +674,9 @@ class BatchOrchestrator:
                     """, (self.instance_id, now, list(claimed)))
 
             conn.commit()
-        finally:
-            conn.close()
+        except Exception:
+            conn.rollback()
+            raise
 
         logger.info(
             f"Claimed {len(claimed)}/{len(paper_ids)} papers "
@@ -725,6 +727,7 @@ class BatchOrchestrator:
         db_path = Path(self.checkpoint_path)
         if not db_path.exists():
             return
+        conn = None
         try:
             conn = sqlite3.connect(str(db_path))
             cursor = conn.cursor()
@@ -734,6 +737,11 @@ class BatchOrchestrator:
             if cursor.rowcount > 0:
                 logger.debug(f"  Cleared {cursor.rowcount} checkpoint(s) for {paper_id}")
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.debug(f"  Checkpoint clear skipped for {paper_id}: {e}")
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass

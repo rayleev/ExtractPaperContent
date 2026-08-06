@@ -77,13 +77,28 @@ def create_app() -> FastAPI:
     )
 
     # CORS（允许前端/DBeaver 等工具跨域访问）
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # 注意：allow_origins=["*"] + allow_credentials=True 不符合 CORS 规范，
+    # 浏览器会拒绝带凭证的跨域请求。使用通配源时必须关闭 credentials。
+    _cors_origins = os.environ.get("CORS_ORIGINS", "").strip()
+    if _cors_origins:
+        # 生产环境：通过环境变量指定允许的源（逗号分隔）
+        origins = [o.strip() for o in _cors_origins.split(",") if o.strip()]
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    else:
+        # 开发环境：通配源，不允许凭证
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=False,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     # 注册路由
     app.include_router(router)
