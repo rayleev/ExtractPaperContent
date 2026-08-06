@@ -47,11 +47,11 @@ def _collect_field_values(extraction: dict, field_name: str):
         variety_index_map = _build_variety_index_map(varieties)
 
         for v in varieties:
-            if field_name in variety:
+            if field_name in v:
                 vn = v.get("variety_name", "")
                 vi = _format_variety_index(variety_index_map.get(vn, 0))
                 treatment_name = v.get("treatment_name")
-                results.append((study_idx, vi, variety[field_name], treatment_name))
+                results.append((study_idx, vi, v[field_name], treatment_name))
 
     return results
 
