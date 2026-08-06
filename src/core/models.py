@@ -79,6 +79,7 @@ class VarietyYield(BaseModel):
     p_raw_unit: Optional[str] = Field(None, description="[OPTIONAL] 磷施用量原始单位")
     k_raw_value: Optional[float] = Field(None, description="[OPTIONAL] 该处理的纯钾(K2O)施用量数值。只抄录论文明确写出的纯养分量")
     k_raw_unit: Optional[str] = Field(None, description="[OPTIONAL] 钾施用量原始单位")
+    nutrient_source_location: Optional[str] = Field(None, description="[OPTIONAL] 氮磷钾施用量数据的来源位置，如 '表2'、'表3-N180行'、'材料方法'")
     n_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的 kg N/ha 值，LLM不要填（本期留空，换算逻辑后续实现）")
     p_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的 kg P2O5/ha 值，LLM不要填（本期留空）")
     k_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的 kg K2O/ha 值，LLM不要填（本期留空）")
@@ -277,6 +278,7 @@ class ExtractionResult(BaseModel):
                     "p_raw_unit": variety.p_raw_unit or "",
                     "k_raw_value": variety.k_raw_value if variety.k_raw_value is not None else "",
                     "k_raw_unit": variety.k_raw_unit or "",
+                    "nutrient_source_location": variety.nutrient_source_location or "",
                     "n_standard_value": variety.n_standard_value if variety.n_standard_value is not None else "",
                     "p_standard_value": variety.p_standard_value if variety.p_standard_value is not None else "",
                     "k_standard_value": variety.k_standard_value if variety.k_standard_value is not None else "",

@@ -18,6 +18,7 @@ import logging
 
 from src.config import AppConfig
 from src.clients.llm import LLMClient
+from src.graph.output import _format_study_index, _format_variety_index, _build_variety_index_map
 from src.graph.rules import validate_extraction
 from src.graph.state import PaperState
 
@@ -78,6 +79,7 @@ def targeted_llm_validate_node(
         if si >= len(studies):
             continue
         study = studies[si]
+        study_idx = _format_study_index(si)
         varieties = study.get("varieties", [])
         if vi >= len(varieties):
             continue
@@ -95,13 +97,36 @@ def targeted_llm_validate_node(
 
         # 查找该品种的原文证据
         evidence_text = ""
+        v_treatment = v.get("treatment_name")
+        # 计算当前品种的 variety_index（按品种名分组）
+        varieties_list = study.get("varieties", [])
+        variety_index_map = _build_variety_index_map(varieties_list)
+        v_vi = _format_variety_index(variety_index_map.get(vname, 0))
+
         for ev in evidence_nodes:
-            if ev.get("field") == "variety_name" and ev.get("value") == vname:
-                evidence_text = (
-                    f"位置: {ev.get('source_location', 'unknown')}\n"
-                    f"原文: {ev.get('source_text', '')}"
-                )
-                break
+            ev_study = ev.get("study_index", "")
+            ev_vi = ev.get("variety_index", "")
+            ev_field = ev.get("field", "")
+            ev_value = ev.get("value", "")
+            ev_treatment = ev.get("treatment_name")
+            # 匹配条件：字段名 + 值 + study_index + variety_index + treatment_name
+            if ev_field == "variety_name" and ev_value == vname:
+                if not ev_study or ev_study == study_idx:
+                    if not ev_vi or ev_vi == v_vi:
+                        # treatment_name 匹配：优先匹配相同 treatment 的证据
+                        if v_treatment and ev_treatment:
+                            if ev_treatment == v_treatment:
+                                evidence_text = (
+                                    f"位置: {ev.get('source_location', 'unknown')}\n"
+                                    f"原文: {ev.get('source_text', '')}"
+                                )
+                                break
+                        else:
+                            evidence_text = (
+                                f"位置: {ev.get('source_location', 'unknown')}\n"
+                                f"原文: {ev.get('source_text', '')}"
+                            )
+                            break
 
         # 构建验证 prompt（包含原文证据和作物信息）
         prompt = (

@@ -312,6 +312,12 @@ evidence_validation:
       required: true
     - field: yield_raw_value
       required: true
+    - field: n_raw_value
+      required: false
+    - field: p_raw_value
+      required: false
+    - field: k_raw_value
+      required: false
 
 # parse 节点配置
 parse:
@@ -396,6 +402,8 @@ logging:
 | `YIELD_004` | issue | yield_raw_unit 为 %（增产比例，非实际产量） |
 | `SOURCE_001` | warning | source_location 为空 |
 | `CONSISTENCY_001` | warning | 跨 study 产量波动 >50% |
+| `NUTRIENT_001` | warning | treatment_name 存在但 N/P/K raw 全空（该处理声称是处理但未抄到任何养分量） |
+| `TREATMENT_001` | warning | management_yield 论文缺少 treatment_name |
 
 ## 论文分类标准
 

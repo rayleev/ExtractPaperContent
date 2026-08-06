@@ -70,6 +70,12 @@
 
 {section_content}
 
+## 提取提示（parse 节点输出）
+
+{extraction_hints}
+
+{variety_constraint}
+
 ## 输出JSON格式
 
 严格输出以下JSON格式，不要包含任何其他文字：
@@ -95,7 +101,8 @@
       "p_raw_value": "[OPTIONAL] 纯磷(P2O5)施用量数值",
       "p_raw_unit": "[OPTIONAL] 磷施用量原始单位",
       "k_raw_value": "[OPTIONAL] 纯钾(K2O)施用量数值",
-      "k_raw_unit": "[OPTIONAL] 钾施用量原始单位"
+      "k_raw_unit": "[OPTIONAL] 钾施用量原始单位",
+      "nutrient_source_location": "[OPTIONAL] 氮磷钾施用量数据的来源位置，如 '表2'、'表3-N180行'、'材料方法'"
     }}
   ]
 }}

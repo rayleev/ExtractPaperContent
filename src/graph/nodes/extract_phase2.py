@@ -114,6 +114,19 @@ def extract_phase2_node(
     else:
         hints_text = "(无提取提示)"
 
+    # 从 extraction_hints 提取权威品种列表
+    variety_hints = [h for h in extraction_hints if h.get("field") == "variety_name"]
+    if variety_hints:
+        authoritative_varieties = list(dict.fromkeys(h.get("value") for h in variety_hints))
+        variety_constraint = (
+            "## 品种列表（parse 节点识别，必须使用）\n"
+            "这篇论文包含以下品种，请用这个列表填写 variety_name：\n"
+            + "\n".join(f"- {v}" for v in authoritative_varieties)
+            + "\n**禁止**填写不在列表中的品种名。同一 study 内所有处理的 variety_name 应保持一致。"
+        )
+    else:
+        variety_constraint = ""
+
     # 补充材料信息
     has_supplementary = doc_context.get("has_supplementary", False)
     table_refs = doc_context.get("table_refs", [])
@@ -237,6 +250,7 @@ def extract_phase2_node(
                 section_content=section_content,
                 category_instruction=category_instruction,
                 extraction_hints=hints_text,
+                variety_constraint=variety_constraint,
             )
 
             # LLM 调用
@@ -299,6 +313,7 @@ def extract_phase2_node(
                 section_content=section_content,
                 category_instruction=category_instruction,
                 extraction_hints=hints_text,
+                variety_constraint=variety_constraint,
             )
 
             max_tokens = max(config.llm.max_tokens, 8192)

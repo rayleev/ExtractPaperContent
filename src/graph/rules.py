@@ -167,7 +167,11 @@ def validate_extraction(extraction: dict, paper_meta: dict, config=None, categor
             if not (v.get("source_location") or "").strip():
                 warnings.append({"code": "SOURCE_001", "message": f"{vprefix}: source_location 为空"})
 
-            # 6. NPK 施肥处理完整性：treatment_name 存在但 N/P/K raw 全空
+            # 6. management_yield 论文缺少 treatment_name
+            if category == "management_yield" and not (v.get("treatment_name") or "").strip():
+                warnings.append({"code": "TREATMENT_001", "message": f"{vprefix}: management_yield 论文缺少 treatment_name"})
+
+            # 7. NPK 施肥处理完整性：treatment_name 存在但 N/P/K raw 全空
             treatment_name = (v.get("treatment_name") or "").strip()
             if treatment_name:
                 n_raw = v.get("n_raw_value")

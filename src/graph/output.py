@@ -66,6 +66,32 @@ def extract_year_from_doi(doi: str) -> Optional[int]:
     return None
 
 
+# ── 索引格式化工具 ──────────────────────────────────────
+
+def _format_study_index(idx: int) -> str:
+    """格式化 study_index: 0 -> 'S_01', 1 -> 'S_02', ..."""
+    return f"S_{idx + 1:02d}"
+
+
+def _format_variety_index(idx: int) -> str:
+    """格式化 variety_index: 0 -> 'V_01', 1 -> 'V_02', ..."""
+    return f"V_{idx + 1:02d}"
+
+
+def _build_variety_index_map(varieties: list) -> dict:
+    """按品种名分组，为每个唯一品种名分配稳定的 variety_index"""
+    variety_index_map = {}
+    for v in varieties:
+        vn = v.get("variety_name", "")
+        if vn not in variety_index_map:
+            variety_index_map[vn] = len(variety_index_map)
+    return variety_index_map
+
+
+# 非管理类论文的 treatment_name 标记
+NON_MANAGEMENT_TREATMENT = "Not management yield"
+
+
 # ── 建表 SQL（PostgreSQL 语法）────────────────────────────
 
 _SCHEMA = """
@@ -88,7 +114,7 @@ CREATE TABLE IF NOT EXISTS pe_core_papers (
 -- 试验级数据
 CREATE TABLE IF NOT EXISTS pe_core_studies (
     paper_id        TEXT NOT NULL,
-    study_index     INTEGER NOT NULL,
+    study_index     TEXT NOT NULL,
     study_title     TEXT,
     study_description TEXT,
     trial_year      TEXT,
@@ -113,10 +139,13 @@ CREATE TABLE IF NOT EXISTS pe_core_studies (
 );
 
 -- 品种产量数据（主数据表）
+-- 主键: (paper_id, study_index, variety_index, treatment_name)
+-- variety_index 在同一 study 内按品种名分组编号（同一品种不同处理共享同一 index）
+-- treatment_name 区分同一品种的不同处理（varietal_yield 论文该字段为 null）
 CREATE TABLE IF NOT EXISTS pe_core_varieties (
     paper_id        TEXT NOT NULL,
-    study_index     INTEGER NOT NULL,
-    variety_index   INTEGER NOT NULL,
+    study_index     TEXT NOT NULL,
+    variety_index   TEXT NOT NULL,
     variety_name    TEXT,
     variety_code    TEXT,
     is_check_variety INTEGER,
@@ -138,17 +167,18 @@ CREATE TABLE IF NOT EXISTS pe_core_varieties (
     p_raw_unit      TEXT,
     k_raw_value     DOUBLE PRECISION,
     k_raw_unit      TEXT,
+    nutrient_source_location TEXT,
     n_standard_value DOUBLE PRECISION,
     p_standard_value DOUBLE PRECISION,
     k_standard_value DOUBLE PRECISION,
-    PRIMARY KEY (paper_id, study_index, variety_index)
+    PRIMARY KEY (paper_id, study_index, variety_index, treatment_name)
 );
 
 -- 品种产量宽表（扁平化，每行 = paper+study+variety 全部字段，用于交接导出）
 CREATE TABLE IF NOT EXISTS varieties_flat (
     paper_id        TEXT NOT NULL,
-    study_index     INTEGER NOT NULL,
-    variety_index   INTEGER NOT NULL,
+    study_index     TEXT NOT NULL,
+    variety_index   TEXT NOT NULL,
     doi             TEXT,
     paper_title     TEXT,
     publication_year INTEGER,
@@ -195,11 +225,12 @@ CREATE TABLE IF NOT EXISTS varieties_flat (
     p_raw_unit      TEXT,
     k_raw_value     DOUBLE PRECISION,
     k_raw_unit      TEXT,
+    nutrient_source_location TEXT,
     n_standard_value DOUBLE PRECISION,
     p_standard_value DOUBLE PRECISION,
     k_standard_value DOUBLE PRECISION,
     extracted_at    TEXT,
-    PRIMARY KEY (paper_id, study_index, variety_index)
+    PRIMARY KEY (paper_id, study_index, variety_index, treatment_name)
 );
 
 -- 论文分类结果
@@ -226,17 +257,22 @@ CREATE TABLE IF NOT EXISTS pe_aud_validation_issues (
 );
 
 -- 证据验证明细
+-- 联合主键: (paper_id, study_index, variety_index, treatment_name, field_name)
+-- 同一行同一字段只验证一次
 CREATE TABLE IF NOT EXISTS pe_aud_evidence (
-    id              SERIAL PRIMARY KEY,
     paper_id        TEXT NOT NULL,
+    study_index     TEXT,
+    variety_index   TEXT,
     field_name      TEXT NOT NULL,
     field_value     TEXT,
+    treatment_name  TEXT,
     source_location TEXT,
     source_text     TEXT,
     confidence      TEXT,
     verified        INTEGER,
     reason          TEXT,
-    created_at      TEXT
+    created_at      TEXT,
+    PRIMARY KEY (paper_id, study_index, variety_index, treatment_name, field_name)
 );
 
 -- 论文处理状态（兼任务协调注册表）
@@ -322,6 +358,8 @@ CREATE INDEX IF NOT EXISTS idx_pe_aud_validation_paper ON pe_aud_validation_issu
 CREATE INDEX IF NOT EXISTS idx_pe_aud_validation_severity ON pe_aud_validation_issues(severity);
 CREATE INDEX IF NOT EXISTS idx_pe_aud_evidence_paper ON pe_aud_evidence(paper_id);
 CREATE INDEX IF NOT EXISTS idx_pe_aud_evidence_field ON pe_aud_evidence(field_name);
+CREATE INDEX IF NOT EXISTS idx_pe_aud_evidence_study ON pe_aud_evidence(paper_id, study_index);
+CREATE INDEX IF NOT EXISTS idx_pe_aud_evidence_treatment ON pe_aud_evidence(paper_id, study_index, treatment_name);
 CREATE INDEX IF NOT EXISTS idx_pe_reg_paper_status ON pe_reg_paper_status(status);
 CREATE INDEX IF NOT EXISTS idx_pe_reg_paper_status_claimed ON pe_reg_paper_status(claimed_by);
 CREATE INDEX IF NOT EXISTS idx_pe_log_pdf_missing ON pe_log_pdf_missing(paper_id);
@@ -383,6 +421,83 @@ def init_database(connection_string: str):
             cur.execute(
                 f"ALTER TABLE pe_reg_paper_status ADD COLUMN IF NOT EXISTS {col} {col_type}"
             )
+
+        # 兼容已有数据库：补充 nutrient_source_location 列
+        for _table in ("pe_core_varieties", "varieties_flat"):
+            cur.execute(
+                f"ALTER TABLE {_table} ADD COLUMN IF NOT EXISTS nutrient_source_location TEXT"
+            )
+
+        # 兼容已有数据库：修改列类型 INTEGER -> TEXT（PostgreSQL 需要手动迁移）
+        # study_index 和 variety_index 从整数改为字符串格式（S_01, V_01）
+        for _table in ("pe_core_studies", "pe_core_varieties", "varieties_flat"):
+            cur.execute(f"""
+                SELECT data_type FROM information_schema.columns
+                WHERE table_name = '{_table}' AND column_name = 'study_index'
+            """)
+            row = cur.fetchone()
+            if row and row[0] == 'integer':
+                # 先删主键约束，再改列类型，最后重建主键
+                cur.execute(f"""
+                    SELECT constraint_name FROM information_schema.table_constraints
+                    WHERE table_name = '{_table}' AND constraint_type = 'PRIMARY KEY'
+                """)
+                pk = cur.fetchone()
+                if pk:
+                    cur.execute(f"ALTER TABLE {_table} DROP CONSTRAINT {pk[0]}")
+                cur.execute(f"ALTER TABLE {_table} ALTER COLUMN study_index TYPE TEXT")
+                cur.execute(f"ALTER TABLE {_table} ALTER COLUMN variety_index TYPE TEXT")
+                if pk:
+                    cur.execute(f"ALTER TABLE {_table} ADD PRIMARY KEY (paper_id, study_index, variety_index, treatment_name)")
+
+        # 兼容已有数据库：补充 pe_aud_evidence 列
+        cur.execute(
+            "ALTER TABLE pe_aud_evidence ADD COLUMN IF NOT EXISTS study_index TEXT"
+        )
+        cur.execute(
+            "ALTER TABLE pe_aud_evidence ADD COLUMN IF NOT EXISTS variety_index TEXT"
+        )
+        cur.execute(
+            "ALTER TABLE pe_aud_evidence ADD COLUMN IF NOT EXISTS treatment_name TEXT"
+        )
+
+        # 兼容已有数据库：修改主键（PostgreSQL 需要手动迁移）
+        # pe_core_varieties: (paper_id, study_index, variety_index) -> (paper_id, study_index, variety_index, treatment_name)
+        for _table in ("pe_core_varieties", "varieties_flat"):
+            cur.execute(f"""
+                SELECT constraint_name FROM information_schema.table_constraints
+                WHERE table_name = '{_table}' AND constraint_type = 'PRIMARY KEY'
+            """)
+            row = cur.fetchone()
+            if row:
+                old_pk = row[0]
+                # 检查是否已包含 treatment_name
+                cur.execute(f"""
+                    SELECT column_name FROM information_schema.key_column_usage
+                    WHERE constraint_name = '{old_pk}' AND table_name = '{_table}'
+                    ORDER BY ordinal_position
+                """)
+                pk_cols = [r[0] for r in cur.fetchall()]
+                if "treatment_name" not in pk_cols:
+                    cur.execute(f"ALTER TABLE {_table} DROP CONSTRAINT {old_pk}")
+                    cur.execute(f"ALTER TABLE {_table} ADD PRIMARY KEY (paper_id, study_index, variety_index, treatment_name)")
+
+        # pe_aud_evidence: id (serial) -> (paper_id, study_index, variety_index, treatment_name, field_name)
+        cur.execute("""
+            SELECT constraint_name FROM information_schema.table_constraints
+            WHERE table_name = 'pe_aud_evidence' AND constraint_type = 'PRIMARY KEY'
+        """)
+        row = cur.fetchone()
+        if row:
+            old_pk = row[0]
+            cur.execute(f"""
+                SELECT column_name FROM information_schema.key_column_usage
+                WHERE constraint_name = '{old_pk}' AND table_name = 'pe_aud_evidence'
+            """)
+            pk_cols = [r[0] for r in cur.fetchall()]
+            if len(pk_cols) == 1 and pk_cols[0] == "id":
+                cur.execute(f"ALTER TABLE pe_aud_evidence DROP CONSTRAINT {old_pk}")
+                cur.execute("ALTER TABLE pe_aud_evidence ADD PRIMARY KEY (paper_id, study_index, variety_index, treatment_name, field_name)")
 
     conn.commit()
     logger.info(f"Database initialized: {connection_string.split('@')[-1] if '@' in connection_string else connection_string}")
@@ -459,6 +574,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
 
         # ── pe_core_studies 表 ──
         for si, study in enumerate(studies):
+            study_idx = _format_study_index(si)
             cur.execute("""
                 INSERT INTO pe_core_studies
                 (paper_id, study_index, study_title, study_description, trial_year,
@@ -474,7 +590,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude,
                     notes = EXCLUDED.notes
             """, (
-                paper_id, si,
+                paper_id, study_idx,
                 study.get("study_title"), study.get("study_description"),
                 study.get("trial_year"), study.get("sowing_date"), study.get("harvest_date"),
                 study.get("country"), study.get("site_administrative_region"),
@@ -490,9 +606,22 @@ def insert_extraction(conn, result: dict, paper_id: str):
 
             # ── pe_core_varieties + varieties_flat ──
             varieties = study.get("varieties", [])
-            for vi, v in enumerate(varieties):
+            # 按品种名分组，同一品种不同处理共享同一 variety_index
+            variety_index_map = _build_variety_index_map(varieties)
+
+            for v in varieties:
+                vn = v.get("variety_name", "")
+                vi = _format_variety_index(variety_index_map.get(vn, 0))
                 is_ck = v.get("is_check_variety")
                 is_ck_int = 1 if is_ck else (0 if is_ck is not None else None)
+
+                # treatment_name 为空时填充占位符（避免主键违反）
+                treatment_name = v.get("treatment_name")
+                if not treatment_name:
+                    if cls.get("category") != "management_yield":
+                        treatment_name = NON_MANAGEMENT_TREATMENT
+                    else:
+                        treatment_name = "Unknown"
 
                 cur.execute("""
                     INSERT INTO pe_core_varieties
@@ -502,18 +631,19 @@ def insert_extraction(conn, result: dict, paper_id: str):
                      significance_group, pct_over_check, measurement_method,
                      source_location, confidence_level,
                      treatment_name, n_raw_value, n_raw_unit, p_raw_value, p_raw_unit,
-                     k_raw_value, k_raw_unit, n_standard_value, p_standard_value, k_standard_value)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (paper_id, study_index, variety_index) DO UPDATE SET
+                     k_raw_value, k_raw_unit, nutrient_source_location,
+                     n_standard_value, p_standard_value, k_standard_value)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (paper_id, study_index, variety_index, treatment_name) DO UPDATE SET
                         variety_name = EXCLUDED.variety_name, variety_code = EXCLUDED.variety_code,
                         yield_raw_value = EXCLUDED.yield_raw_value,
                         yield_standard_value = EXCLUDED.yield_standard_value,
                         pct_over_check = EXCLUDED.pct_over_check,
-                        treatment_name = EXCLUDED.treatment_name,
                         n_raw_value = EXCLUDED.n_raw_value, p_raw_value = EXCLUDED.p_raw_value,
-                        k_raw_value = EXCLUDED.k_raw_value
+                        k_raw_value = EXCLUDED.k_raw_value,
+                        nutrient_source_location = EXCLUDED.nutrient_source_location
                 """, (
-                    paper_id, si, vi,
+                    paper_id, study_idx, vi,
                     v.get("variety_name"), v.get("variety_code"), is_ck_int,
                     v.get("variety_source"), v.get("yield_raw_value"),
                     v.get("yield_raw_unit"), v.get("yield_standard_value"),
@@ -525,6 +655,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     v.get("n_raw_value"), v.get("n_raw_unit"),
                     v.get("p_raw_value"), v.get("p_raw_unit"),
                     v.get("k_raw_value"), v.get("k_raw_unit"),
+                    v.get("nutrient_source_location"),
                     v.get("n_standard_value"), v.get("p_standard_value"),
                     v.get("k_standard_value"),
                 ))
@@ -547,18 +678,19 @@ def insert_extraction(conn, result: dict, paper_id: str):
                      pct_over_check, measurement_method, source_location,
                      confidence_level,
                      treatment_name, n_raw_value, n_raw_unit, p_raw_value, p_raw_unit,
-                     k_raw_value, k_raw_unit, n_standard_value, p_standard_value, k_standard_value,
+                     k_raw_value, k_raw_unit, nutrient_source_location,
+                     n_standard_value, p_standard_value, k_standard_value,
                      extracted_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (paper_id, study_index, variety_index) DO UPDATE SET
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (paper_id, study_index, variety_index, treatment_name) DO UPDATE SET
                         variety_name = EXCLUDED.variety_name,
                         yield_standard_value = EXCLUDED.yield_standard_value,
                         extracted_at = EXCLUDED.extracted_at,
-                        treatment_name = EXCLUDED.treatment_name,
                         n_raw_value = EXCLUDED.n_raw_value, p_raw_value = EXCLUDED.p_raw_value,
-                        k_raw_value = EXCLUDED.k_raw_value
+                        k_raw_value = EXCLUDED.k_raw_value,
+                        nutrient_source_location = EXCLUDED.nutrient_source_location
                 """, (
-                    paper_id, si, vi,
+                    paper_id, study_idx, vi,
                     meta.get("doi") or paper.get("paper_doi"),
                     meta.get("title") or paper.get("paper_title"),
                     int(meta["year"]) if meta.get("year", "").isdigit() else paper.get("publication_year"),
@@ -582,10 +714,11 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     v.get("significance_group"), v.get("pct_over_check"),
                     v.get("measurement_method"), v.get("source_location"),
                     v.get("confidence_level"),
-                    v.get("treatment_name"),
+                    treatment_name,
                     v.get("n_raw_value"), v.get("n_raw_unit"),
                     v.get("p_raw_value"), v.get("p_raw_unit"),
                     v.get("k_raw_value"), v.get("k_raw_unit"),
+                    v.get("nutrient_source_location"),
                     v.get("n_standard_value"), v.get("p_standard_value"),
                     v.get("k_standard_value"),
                     extracted_at,
@@ -597,13 +730,16 @@ def insert_extraction(conn, result: dict, paper_id: str):
             verified_int = 1 if ev.get("verified") else 0
             cur.execute("""
                 INSERT INTO pe_aud_evidence
-                (paper_id, field_name, field_value, source_location,
-                 source_text, confidence, verified, reason, created_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (paper_id, study_index, variety_index, field_name, field_value, treatment_name,
+                 source_location, source_text, confidence, verified, reason, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 paper_id,
+                ev.get("study_index"),
+                ev.get("variety_index"),
                 ev.get("field", ""),
                 str(ev.get("value", ""))[:500],
+                ev.get("treatment_name"),
                 ev.get("source_location", ""),
                 ev.get("source_text", ""),
                 ev.get("confidence", ""),

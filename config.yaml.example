@@ -109,3 +109,20 @@ database:
 logging:
   level: "INFO"
   format: "%(asctime)s [%(levelname)s] %(message)s"
+
+# 证据验证配置
+evidence_validation:
+  enabled: true
+  fields:
+    - field: crop_species
+      required: true
+    - field: variety_name
+      required: true
+    - field: yield_raw_value
+      required: true
+    - field: n_raw_value
+      required: false
+    - field: p_raw_value
+      required: false
+    - field: k_raw_value
+      required: false

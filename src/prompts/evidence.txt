@@ -30,6 +30,9 @@
     {{
       "field": "字段名",
       "value": "字段值",
+      "study_index": 0,
+      "variety_index": 0,
+      "treatment_name": "处理名称（如'N180'、'CK'，无则填null）",
       "source_location": "来源位置（如'摘要'、'表3'、'3.2.3节'）",
       "source_text": "原文片段（50-200字）",
       "confidence": "high/medium/low",
@@ -46,6 +49,9 @@
 - source_text 必须是论文中的原文片段
 - confidence 表示证据的可靠程度：high=直接引用，medium=推断，low=不确定
 - verified 表示证据是否通过验证
+- **study_index 必须与输入中的 study_index 对应**，用于标识证据属于哪个试验
+- **variety_index 必须与输入中的 variety_index 对应**，用于标识证据属于哪个品种（同一品种不同处理共享同一 index）
+- **treatment_name** 用于标识证据属于哪个处理水平，management_yield 论文必填，varietal_yield 论文可为 null
 
 ---
 

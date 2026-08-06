@@ -1,5 +1,7 @@
 ## 特别说明：本论文为管理/栽培措施型试验（management_yield）
 
+{variety_constraint}
+
 本论文研究的是**栽培管理措施**（如施肥量、灌溉方式、播期、密度、耕作方式、肥料种类等）
 对产量的影响。这类论文的数据表格中，每一行通常是**不同的处理水平**
 （例如施氮量 N0/N1/N2/N3、不同灌溉处理、不同密度梯度），而**不是不同品种**；
@@ -54,6 +56,11 @@
    - NPK 字段（n/p/k_raw_value + n/p/k_raw_unit）**全部填 null**
    - treatment_name 仍填处理名（如 "滴灌"、"高密度"）
    - 这些处理的 NPK 信息由 `cultural_practices` 或 `experimental_design_description` 自由文本承载
+
+6. **NPK 数据来源标注**（重要）：
+   - 当填入了 n/p/k_raw_value 时，必须在 `nutrient_source_location` 字段中标注这些数据的来源位置
+   - 例如："表2"、"表3-N180行"、"材料方法-试验设计"、"表1 施肥方案"
+   - 如果 NPK 全部为 null（非肥料处理），`nutrient_source_location` 也填 null
 
 ## is_check_variety 字段的双语义
 

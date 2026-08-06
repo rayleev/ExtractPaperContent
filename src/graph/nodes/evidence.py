@@ -22,26 +22,38 @@ logger = logging.getLogger("paper_extractor")
 PROMPT_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 
 
-def _get_field_value(extraction: dict, field_name: str):
-    """从 extraction 中获取字段值"""
+from src.graph.output import _format_study_index, _format_variety_index, _build_variety_index_map
+
+
+def _collect_field_values(extraction: dict, field_name: str):
+    """从 extraction 中收集字段值，返回 [(study_index, variety_index, value, treatment_name), ...]"""
+    results = []
+
     # paper 级字段
     paper = extraction.get("paper", {})
     if field_name in paper:
-        return paper[field_name]
+        results.append(("", "", paper[field_name], None))
+        return results
 
-    # study 级字段（取第一个 study 的值）
+    # study 级和 variety 级字段
     studies = extraction.get("studies", [])
-    if studies:
-        if field_name in studies[0]:
-            return studies[0][field_name]
+    # 预计算 variety_index 映射（按品种名分组）
+    for si, study in enumerate(studies):
+        study_idx = _format_study_index(si)
+        if field_name in study:
+            results.append((study_idx, "", study[field_name], None))
 
-    # variety 级字段（取第一个 variety 的值）
-    if studies:
-        varieties = studies[0].get("varieties", [])
-        if varieties and field_name in varieties[0]:
-            return varieties[0][field_name]
+        varieties = study.get("varieties", [])
+        variety_index_map = _build_variety_index_map(varieties)
 
-    return None
+        for v in varieties:
+            if field_name in variety:
+                vn = v.get("variety_name", "")
+                vi = _format_variety_index(variety_index_map.get(vn, 0))
+                treatment_name = v.get("treatment_name")
+                results.append((study_idx, vi, variety[field_name], treatment_name))
+
+    return results
 
 
 def _find_evidence_from_hints(field_name: str, value, extraction_hints: list):
@@ -53,7 +65,6 @@ def _find_evidence_from_hints(field_name: str, value, extraction_hints: list):
         if hint.get("field") != field_name:
             continue
         hint_value = str(hint.get("value", ""))
-        # 精确匹配 或 包含匹配（处理 yield_raw_value=8383.5 vs hint="8383.5 kg/hm²" 的情况）
         if hint_value == value_str or value_str in hint_value or hint_value in value_str:
             return {
                 "location": "unknown",
@@ -104,16 +115,26 @@ def evidence_node(
     candidates = []
     for field_cfg in field_configs:
         field_name = field_cfg.field
-        value = _get_field_value(extraction, field_name)
-        candidate = _find_evidence_from_hints(field_name, value, extraction_hints)
+        values = _collect_field_values(extraction, field_name)
 
-        field_values.append({
-            "field": field_name,
-            "value": value,
-            "required": field_cfg.required,
-            "description": field_cfg.description,
-        })
-        candidates.append(candidate or {"location": "unknown", "text": ""})
+        for si, vi, value, treatment_name in values:
+            candidate = _find_evidence_from_hints(field_name, value, extraction_hints)
+
+            field_info = {
+                "field": field_name,
+                "value": value,
+                "required": field_cfg.required,
+                "description": field_cfg.description,
+            }
+            if si:
+                field_info["study_index"] = si
+            if vi:
+                field_info["variety_index"] = vi
+            if treatment_name:
+                field_info["treatment_name"] = treatment_name
+
+            field_values.append(field_info)
+            candidates.append(candidate or {"location": "unknown", "text": ""})
 
     # 批量 LLM 验证
     prompt_template = (PROMPT_DIR / "evidence.txt").read_text(encoding="utf-8")
