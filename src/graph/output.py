@@ -255,7 +255,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     v.get("significance_group"), v.get("pct_over_check"),
                     v.get("measurement_method"), v.get("source_location"),
                     v.get("confidence_level"),
-                    v.get("treatment_name"),
+                    treatment_name,
                     v.get("n_raw_value"), v.get("n_raw_unit"),
                     v.get("p_raw_value"), v.get("p_raw_unit"),
                     v.get("k_raw_value"), v.get("k_raw_unit"),
