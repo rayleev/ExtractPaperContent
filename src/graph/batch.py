@@ -15,10 +15,10 @@ import logging
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, wait, FIRST_COMPLETED
 
 from src.config import AppConfig
 from src.clients.llm import LLMClient
@@ -44,6 +44,13 @@ logger = logging.getLogger("paper_extractor")
 
 class BatchOrchestrator:
     """批量论文处理编排器。"""
+
+    # processing 状态论文的回收超时（秒）：实例崩溃后其领取的论文超过该时长
+    # 未被更新，视为可被其他实例重新领取（防止论文永久卡在 processing）。
+    CLAIM_STALE_SECONDS = 3600
+    # 处理心跳间隔（秒）：一篇论文 processing 期间周期性刷新 updated_at，
+    # 使超时回收能区分"论文本身很耗时（仍在处理）"与"实例已死"，避免耗时论文被误回收重复处理。
+    HEARTBEAT_INTERVAL = 60
 
     def __init__(
         self,
@@ -79,6 +86,11 @@ class BatchOrchestrator:
 
         # 多实例标识（用于任务领取 claim_tasks）
         self.instance_id = os.environ.get("INSTANCE_ID", "default")
+
+        # 实例级心跳守护线程的停止信号
+        self._heartbeat_stop = threading.Event()
+        # 超时回收节流：记录上次执行回收的时间戳
+        self._last_reclaim_time = 0.0
 
         # 统计
         self.stats = {
@@ -157,8 +169,11 @@ class BatchOrchestrator:
             )
         claimed_papers = [p for p in to_process if p.get("paper_id", "") in claimed_ids]
 
+        # 实例级心跳：批处理期间刷新本实例名下所有 processing 论文的租约，
+        # 避免排队等待（worker 未启动）的论文因长时间无心跳被其他实例误回收。
+        heartbeat_thread = self._start_heartbeat() if claimed_papers else None
+
         # 并发处理（仅处理本实例成功领取的论文）
-        import time as _time
         try:
             with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
                 futures = {}
@@ -212,7 +227,8 @@ class BatchOrchestrator:
             except Exception:
                 pass
         finally:
-            # 批次结束，关闭长连接
+            # 批次结束：停止心跳守护线程，关闭长连接
+            self._stop_heartbeat(heartbeat_thread)
             self._close_batch_connection()
 
         logger.info(
@@ -461,17 +477,18 @@ class BatchOrchestrator:
 
     def process_from_db(self, chunk_size: int = 100) -> dict:
         """
-        从 paper_status 表分块拉取 pending 论文并处理。
+        从 paper_status 表持续领取 pending 论文并以滑动窗口并发处理。
 
         适用于大规模场景（15M+ 论文）：
-          - 不依赖内存中的论文列表，每次只从 DB 拉取 chunk_size 篇
+          - 不依赖内存中的论文列表，每次从 DB 领取
           - 通过 FOR UPDATE SKIP LOCKED 原子领取，多实例安全
-          - 循环处理直到没有更多 pending 论文
+          - 滑动窗口：始终维持约 max_concurrent 篇论文在跑，一篇完成立即补领，
+            避免一次性大批量领取导致其余论文长期空等
 
         搜索结果需先通过 insert_search_results() 写入 paper_status 表。
 
         Args:
-            chunk_size: 每次从 DB 领取的论文数量（默认 100）。
+            chunk_size: 保留参数（兼容旧调用），窗口大小由 concurrency.extract_workers 决定。
 
         Returns:
             处理统计字典。
@@ -480,89 +497,46 @@ class BatchOrchestrator:
         target_step = self.stop_after if self.stop_after in self._STEP_ORDER else "extract"
 
         logger.info(
-            f"process_from_db starting: chunk_size={chunk_size}, "
+            f"process_from_db starting: window={self.max_concurrent}, "
             f"target_step={target_step}, instance={self.instance_id}"
         )
 
         total_claimed = 0
-        chunk_num = 0
+        heartbeat_thread = None
 
         try:
-            while True:
-                # ── 检查外部停止信号 ──
-                if self.stop_event and self.stop_event.is_set():
-                    logger.info(
-                        f"Stop signal detected — halting after {chunk_num} chunks "
-                        f"({total_claimed} papers claimed)"
-                    )
-                    break
+            # 实例级心跳：批处理全程刷新本实例名下所有 processing 论文的租约，
+            # 覆盖"已领取但尚在 executor 队列排队、worker 未启动"的论文，防止被误回收。
+            heartbeat_thread = self._start_heartbeat()
 
-                chunk_num += 1
+            # 复用批次级连接（领取是短事务，commit 后即释放行锁）
+            claim_conn = self._get_batch_connection()
 
-                # ── 原子领取一块 pending 论文（含元数据）──
-                # 复用批次级连接（领取是短事务，commit 后即释放行锁）
-                claim_conn = self._get_batch_connection()
-                try:
-                    with claim_conn.cursor() as cur:
-                        cur.execute("""
-                            SELECT paper_id, title, ss_paper_id, doi, abstract, publication_year, journal
-                            FROM pe_reg_paper_status
-                            WHERE status = 'pending'
-                            ORDER BY paper_id
-                            LIMIT %s
-                            FOR UPDATE SKIP LOCKED
-                        """, (chunk_size,))
-                        rows = cur.fetchall()
+            # 初始填满窗口
+            papers = self._claim_pending_papers(claim_conn, self.max_concurrent)
+            total_claimed += len(papers)
+            self.stats["total"] = total_claimed
 
-                        if not rows:
-                            break
+            with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
+                future_to_paper = {}
+                submit_times = {}
+                for paper in papers:
+                    f = executor.submit(self._process_one_paper, paper, None, {})
+                    future_to_paper[f] = paper
+                    submit_times[f] = time.time()
+                pending = set(future_to_paper)
 
-                        chunk_ids = [r[0] for r in rows]
-                        cur.execute("""
-                            UPDATE pe_reg_paper_status
-                            SET status = 'processing', claimed_by = %s, updated_at = %s
-                            WHERE paper_id = ANY(%s)
-                        """, (self.instance_id, datetime.now().isoformat(), chunk_ids))
+                while pending:
+                    # 外部停止信号：等待所有在途任务完成，不再补领
+                    if self.stop_event and self.stop_event.is_set():
+                        logger.info(f"Stop signal detected — draining {len(pending)} in-flight papers")
+                        done, pending = wait(pending)
+                    else:
+                        done, pending = wait(pending, return_when=FIRST_COMPLETED)
 
-                    claim_conn.commit()
-                except Exception:
-                    claim_conn.rollback()
-                    raise
-
-                # ── 转换为 paper dict ──
-                papers = []
-                for r in rows:
-                    papers.append({
-                        "paper_id": r[0],
-                        "title": r[1] or "",
-                        "ss_paper_id": r[2] or "",
-                        "doi": r[3] or "",
-                        "abstract": r[4] or "",
-                        "publication_year": r[5] or "",
-                        "journal": r[6] or "",
-                    })
-
-                total_claimed += len(papers)
-                self.stats["total"] = total_claimed
-                logger.info(
-                    f"Chunk {chunk_num}: claimed {len(papers)} papers "
-                    f"(total claimed: {total_claimed})"
-                )
-
-                # ── 并发处理本块 ──
-                with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
-                    futures = {}
-                    submit_times = {}
-                    for paper in papers:
-                        future = executor.submit(
-                            self._process_one_paper, paper, None, {},
-                        )
-                        futures[future] = paper
-                        submit_times[future] = time.time()
-
-                    for future in as_completed(futures):
-                        paper = futures[future]
-                        duration = time.time() - submit_times.get(future, time.time())
+                    for future in done:
+                        paper = future_to_paper.pop(future)
+                        duration = time.time() - submit_times.pop(future, time.time())
                         try:
                             result = future.result()
                             self._handle_paper_result(result, paper, target_step, duration)
@@ -582,14 +556,21 @@ class BatchOrchestrator:
                                 conn.rollback()
                             self._log_progress()
 
-                logger.info(
-                    f"Chunk {chunk_num} done: "
-                    f"{self.stats['completed']} ok, {self.stats['failed']} fail, "
-                    f"{self.stats['skipped']} skip (total: {total_claimed})"
-                )
+                    # 补领：维持滑动窗口 ~max_concurrent
+                    if not (self.stop_event and self.stop_event.is_set()):
+                        refill_limit = self.max_concurrent - len(pending)
+                        if refill_limit > 0:
+                            new_papers = self._claim_pending_papers(claim_conn, refill_limit)
+                            total_claimed += len(new_papers)
+                            self.stats["total"] = total_claimed
+                            for paper in new_papers:
+                                f = executor.submit(self._process_one_paper, paper, None, {})
+                                future_to_paper[f] = paper
+                                submit_times[f] = time.time()
+                                pending.add(f)
 
-            self.stats["total"] = total_claimed
-            self.stats["finished_at"] = datetime.now().isoformat()
+                self.stats["total"] = total_claimed
+                self.stats["finished_at"] = datetime.now().isoformat()
 
             # 批次完成后生成输出（复用批次级连接）
             if target_step == "extract" and self._completed_results:
@@ -603,7 +584,8 @@ class BatchOrchestrator:
             except Exception:
                 pass
         finally:
-            # 批次结束，关闭长连接
+            # 批次结束：停止心跳守护线程，关闭长连接
+            self._stop_heartbeat(heartbeat_thread)
             self._close_batch_connection()
 
         logger.info(
@@ -615,6 +597,68 @@ class BatchOrchestrator:
         return self.stats
 
     # ── 多实例任务领取 ────────────────────────────────────────
+
+    def _claim_pending_papers(self, conn, limit: int) -> List[dict]:
+        """原子领取至多 limit 篇 pending 论文（含元数据），多实例安全。
+
+        周期性回收超时未心跳的 processing 论文（实例崩溃遗留）为 pending 后，
+        用 FOR UPDATE SKIP LOCKED 原子领取，避免多实例重复处理。
+        回收操作按时间节流（HEARTBEAT_INTERVAL），避免每个领取都触发全表扫描。
+        """
+        now_ts = time.time()
+        do_reclaim = (now_ts - self._last_reclaim_time) >= self.HEARTBEAT_INTERVAL
+        if do_reclaim:
+            self._last_reclaim_time = now_ts
+        try:
+            with conn.cursor() as cur:
+                # 超时回收：实例崩溃后遗留的 processing 论文（超过回收阈值未发心跳）
+                # 重置为 pending，交由下方 FOR UPDATE SKIP LOCKED 原子领取，
+                # 保证同一时刻仍只有单个实例能抢到；仍在处理（有心跳、updated_at 新鲜）的
+                # 论文不会被误抢，从而避免重复处理。
+                if do_reclaim:
+                    now = datetime.now().isoformat()
+                    stale_cutoff = (datetime.now() - timedelta(seconds=self.CLAIM_STALE_SECONDS)).isoformat()
+                    cur.execute("""
+                        UPDATE pe_reg_paper_status
+                        SET status = 'pending', claimed_by = NULL, updated_at = %s
+                        WHERE status = 'processing' AND updated_at < %s
+                    """, (now, stale_cutoff))
+
+                cur.execute("""
+                    SELECT paper_id, title, ss_paper_id, doi, abstract, publication_year, journal
+                    FROM pe_reg_paper_status
+                    WHERE status = 'pending'
+                    ORDER BY paper_id
+                    LIMIT %s
+                    FOR UPDATE SKIP LOCKED
+                """, (limit,))
+                rows = cur.fetchall()
+                if not rows:
+                    return []
+
+                ids = [r[0] for r in rows]
+                cur.execute("""
+                    UPDATE pe_reg_paper_status
+                    SET status = 'processing', claimed_by = %s, updated_at = %s
+                    WHERE paper_id = ANY(%s)
+                """, (self.instance_id, datetime.now().isoformat(), ids))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+        return [
+            {
+                "paper_id": r[0],
+                "title": r[1] or "",
+                "ss_paper_id": r[2] or "",
+                "doi": r[3] or "",
+                "abstract": r[4] or "",
+                "publication_year": r[5] or "",
+                "journal": r[6] or "",
+            }
+            for r in rows
+        ]
 
     def _claim_papers_batch(self, papers: List[dict]) -> set:
         """
@@ -636,12 +680,17 @@ class BatchOrchestrator:
 
         paper_ids = [p.get("paper_id", "") for p in papers if p.get("paper_id")]
         now = datetime.now().isoformat()
+        # 回收超时阈值：仅当论文状态为 processing 且超过该时长未被更新时才重置，
+        # 避免误抢其他实例"正在处理中"的论文（同时不破坏原有锁定语义）。
+        stale_cutoff = (datetime.now() - timedelta(seconds=self.CLAIM_STALE_SECONDS)).isoformat()
 
         # 复用批次级连接（领取是短事务，提交后即释放行锁，不会阻塞其他实例）
         conn = self._get_batch_connection()
         try:
             with conn.cursor() as cur:
-                # 1) 为新论文创建 pending 行；将上次失败/出错的论文重置为 pending（允许重试）
+                # 1) 为新论文创建 pending 行；将上次失败/出错的论文重置为 pending（允许重试）；
+                #    超过回收超时的 processing 论文（实例崩溃遗留）同样重置为 pending，交由后续
+                #    FOR UPDATE SKIP LOCKED 原子领取，保证同一时刻仍只有单个实例能抢到。
                 for paper in papers:
                     pid = paper.get("paper_id", "")
                     title = paper.get("title", "")[:500]
@@ -655,7 +704,9 @@ class BatchOrchestrator:
                             claimed_by = NULL,
                             updated_at = %s
                         WHERE pe_reg_paper_status.status IN ('failed', 'error')
-                    """, (pid, title, now, now))
+                           OR (pe_reg_paper_status.status = 'processing'
+                               AND pe_reg_paper_status.updated_at < %s)
+                    """, (pid, title, now, now, stale_cutoff))
 
                 # 2) 行锁领取：SKIP LOCKED 自动跳过被其他实例锁住的行
                 cur.execute("""
@@ -745,3 +796,52 @@ class BatchOrchestrator:
                     conn.close()
                 except Exception:
                     pass
+
+    def _bump_claimed_heartbeats(self):
+        """实例级心跳：刷新本实例名下所有仍在 processing 的论文的 updated_at。
+
+        覆盖"已领取但尚在 executor 队列排队、worker 尚未启动"的论文——它们与正在处理的
+        论文同属本实例的租约。只要实例活着，这些论文就持续续约，不会被 _claim_papers_batch
+        或 process_from_db 的超时回收误判为"实例已死"而重置为 pending（从而避免重复处理）。
+        实例崩溃后心跳停止，其名下论文在超过回收阈值后被其他实例正常回收。
+
+        使用独立短连接（不共享主线程连接，psycopg2 连接非线程安全）。
+        """
+        try:
+            conn = get_connection(self._db_connection_string)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE pe_reg_paper_status SET updated_at = %s "
+                        "WHERE claimed_by = %s AND status = 'processing'",
+                        (datetime.now().isoformat(), self.instance_id),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.debug(f"  Instance heartbeat failed: {e}")
+
+    def _start_heartbeat(self) -> threading.Thread:
+        """启动实例级心跳守护线程，批处理期间每隔 HEARTBEAT_INTERVAL 刷新一次。
+
+        返回线程句柄，供 finally 中 join 停止。
+        """
+        def _loop():
+            while not self._heartbeat_stop.is_set():
+                if self._heartbeat_stop.wait(self.HEARTBEAT_INTERVAL):
+                    break
+                self._bump_claimed_heartbeats()
+
+        t = threading.Thread(target=_loop, daemon=True, name="claim-heartbeat")
+        t.start()
+        return t
+
+    def _stop_heartbeat(self, thread: Optional[threading.Thread]):
+        """停止心跳守护线程并等待其退出。"""
+        self._heartbeat_stop.set()
+        if thread is not None:
+            try:
+                thread.join(timeout=5)
+            except Exception:
+                pass

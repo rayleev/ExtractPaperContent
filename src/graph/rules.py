@@ -148,15 +148,25 @@ def validate_extraction(extraction: dict, paper_meta: dict, config=None, categor
                     flagged.append((si, vi))
 
             # 3. pct_over_check 与对照品种计算一致性
+            # 基于换算后的标准产量（kg/ha）比较，规避单位写法差异（如 kg/ha vs kg·hm⁻²），
+            # 避免不同写法但语义等价的单位静默跳过校验。
             pct = v.get("pct_over_check")
-            if pct is not None and raw_val is not None and ck_varieties:
+            if pct is not None and std_val is not None and ck_varieties:
                 ck_yield = ck_varieties[0].get("yield_raw_value")
                 ck_unit = ck_varieties[0].get("yield_raw_unit", "")
-                if ck_yield and raw_unit == ck_unit:
-                    computed_pct = (raw_val - ck_yield) / ck_yield * 100
-                    if abs(computed_pct - pct) > 1.0:
-                        warnings.append({"code": "YIELD_003", "message": f"{vprefix}: 增产率偏差 (reported={pct}%, computed={computed_pct:.1f}%)"})
-                        flagged.append((si, vi))
+                if ck_yield:
+                    ck_std = _convert_yield(
+                        ck_yield, ck_unit,
+                        mass_to_kg=config.unit_conversion.mass_to_kg if config else {},
+                        area_to_ha=config.unit_conversion.area_to_ha if config else {},
+                        context_plot={"plot", "小区"},
+                        context_plant={"plant", "株", "pot", "盆", "ear", "穗", "hill", "穴", "棵"},
+                    )
+                    if ck_std is not None and ck_std > 0:
+                        computed_pct = (std_val - ck_std) / ck_std * 100
+                        if abs(computed_pct - pct) > 1.0:
+                            warnings.append({"code": "YIELD_003", "message": f"{vprefix}: 增产率偏差 (reported={pct}%, computed={computed_pct:.1f}%)"})
+                            flagged.append((si, vi))
 
             # 4. yield_raw_unit 为 % 的异常
             if raw_unit == "%":

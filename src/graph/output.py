@@ -298,7 +298,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     paper_id, study_idx, vi,
                     meta.get("doi") or paper.get("paper_doi"),
                     meta.get("title") or paper.get("paper_title"),
-                    int(meta["year"]) if meta.get("year", "").isdigit() else paper.get("publication_year"),
+                    int(meta["year"]) if meta.get("year", "").isdigit() else paper.get("publication_year") or extract_year_from_doi(meta.get("doi") or paper.get("paper_doi")),
                     meta.get("journal") or paper.get("journal_name"),
                     paper.get("crop_species"), cls.get("category"),
                     study.get("study_title"), study.get("trial_year"),
