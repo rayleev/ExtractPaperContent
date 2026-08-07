@@ -340,6 +340,15 @@ def insert_extraction(conn, result: dict, paper_id: str):
                 (paper_id, study_index, variety_index, field_name, field_value, treatment_name,
                  source_location, source_text, confidence, verified, reason, created_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (paper_id, study_index, variety_index, treatment_name, field_name)
+                DO UPDATE SET
+                    field_value = EXCLUDED.field_value,
+                    source_location = EXCLUDED.source_location,
+                    source_text = EXCLUDED.source_text,
+                    confidence = EXCLUDED.confidence,
+                    verified = EXCLUDED.verified,
+                    reason = EXCLUDED.reason,
+                    created_at = EXCLUDED.created_at
             """, (
                 paper_id,
                 ev.get("study_index") or "",
