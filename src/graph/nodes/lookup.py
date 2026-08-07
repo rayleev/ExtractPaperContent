@@ -54,7 +54,7 @@ def lookup_node(
         logger.info(f"  [{pid[:25]}] Lookup: no needs_lookup hints, skipping")
         return {"lookup_results": [], "status": "lookup_skipped", "node_status": {"lookup": "lookup_skipped"}}
 
-    if not needs_lookup:
+    if not state.get("needs_lookup"):
         return {"lookup_results": [], "status": "lookup_skipped", "node_status": {"lookup": "lookup_skipped"}}
 
     logger.info(f"  [{pid[:25]}] Lookup: processing {len(lookup_hints)} hints")
