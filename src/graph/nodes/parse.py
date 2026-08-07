@@ -159,6 +159,7 @@ def _understand_document_chunked(
     llm: LLMClient,
     config: AppConfig,
     max_tokens_override: int = 0,
+    pid: str = "",
 ) -> Optional[dict]:
     """分段理解 + 程序合并（适用于长论文 + 有章节标题）。"""
     prompt_template = (PROMPT_DIR / "parse_understanding.txt").read_text(encoding="utf-8")
@@ -166,9 +167,13 @@ def _understand_document_chunked(
 
     # 按文档树顶层章节切分
     chunks = _split_by_top_level_sections(md_text)
+    logger.info(f"  [{pid[:25]}] Chunked: {len(chunks)} chunks, max_tokens={max_tokens}")
 
     partial_results = []
     for i, chunk in enumerate(chunks):
+        chunk_size = len(chunk)
+        logger.info(f"  [{pid[:25]}] Chunk {i+1}/{len(chunks)}: calling LLM ({chunk_size} chars)...")
+        t0 = time.time()
         prompt = prompt_template.format(
             md_text=chunk,
             tree_outline=tree_outline,
@@ -178,14 +183,22 @@ def _understand_document_chunked(
             chunk_info=f"第 {i+1}/{len(chunks)} 段",
         )
         partial = llm.call_json(prompt, max_tokens=max_tokens, node_name="parse")
+        elapsed = time.time() - t0
         if partial:
             partial_results.append(partial)
+            logger.info(f"  [{pid[:25]}] Chunk {i+1}/{len(chunks)}: OK ({elapsed:.1f}s)")
+        else:
+            logger.warning(f"  [{pid[:25]}] Chunk {i+1}/{len(chunks)}: FAILED ({elapsed:.1f}s)")
 
     if not partial_results:
         return None
 
     # 程序合并（无 LLM 调用）
-    return _merge_partial_results(partial_results)
+    t0 = time.time()
+    merged = _merge_partial_results(partial_results)
+    elapsed = time.time() - t0
+    logger.info(f"  [{pid[:25]}] Merged {len(partial_results)} chunks ({elapsed:.2f}s)")
+    return merged
 
 
 def _understand_document_sliding_window(
@@ -196,15 +209,19 @@ def _understand_document_sliding_window(
     llm: LLMClient,
     config: AppConfig,
     max_tokens_override: int = 0,
+    pid: str = "",
 ) -> Optional[dict]:
     """滑动窗口 + 程序合并（适用于长论文 + 无章节标题）。"""
     prompt_template = (PROMPT_DIR / "parse_understanding.txt").read_text(encoding="utf-8")
     max_tokens = max_tokens_override if max_tokens_override > 0 else config.llm.max_tokens
 
     chunks = _sliding_window(md_text, config.sliding_window_size, config.sliding_window_step)
+    logger.info(f"  [{pid[:25]}] Sliding-window: {len(chunks)} windows (size={config.sliding_window_size}, step={config.sliding_window_step}), max_tokens={max_tokens}")
 
     partial_results = []
     for i, (chunk, start_pos) in enumerate(chunks):
+        logger.info(f"  [{pid[:25]}] Window {i+1}/{len(chunks)}: calling LLM (start={start_pos}, {len(chunk)} chars)...")
+        t0 = time.time()
         prompt = prompt_template.format(
             md_text=chunk,
             tree_outline=tree_outline,
@@ -214,14 +231,22 @@ def _understand_document_sliding_window(
             chunk_info=f"窗口 {i+1}（起始位置 {start_pos}）",
         )
         partial = llm.call_json(prompt, max_tokens=max_tokens, node_name="parse")
+        elapsed = time.time() - t0
         if partial:
             partial_results.append(partial)
+            logger.info(f"  [{pid[:25]}] Window {i+1}/{len(chunks)}: OK ({elapsed:.1f}s)")
+        else:
+            logger.warning(f"  [{pid[:25]}] Window {i+1}/{len(chunks)}: FAILED ({elapsed:.1f}s)")
 
     if not partial_results:
         return None
 
     # 程序合并（无 LLM 调用）
-    return _merge_partial_results(partial_results)
+    t0 = time.time()
+    merged = _merge_partial_results(partial_results)
+    elapsed = time.time() - t0
+    logger.info(f"  [{pid[:25]}] Merged {len(partial_results)} windows ({elapsed:.2f}s)")
+    return merged
 
 
 def _split_into_chunks(text: str, max_length: int = 50000) -> list[str]:
@@ -289,6 +314,7 @@ def _understand_document(
     llm: LLMClient,
     config: AppConfig,
     max_tokens_override: int = 0,
+    pid: str = "",
 ) -> Optional[dict]:
     """
     根据论文长度选择策略，调用 LLM 理解论文。
@@ -303,7 +329,7 @@ def _understand_document(
 
     if estimated_tokens < threshold_tokens:
         # 短论文：一次性给全文
-        logger.info(f"    Using full-text strategy (est. {estimated_tokens:.0f} tokens, context_window={config.context_window}, threshold={threshold_tokens:.0f})")
+        logger.info(f"  [{pid[:25]}] Using full-text strategy (est. {estimated_tokens:.0f} tokens, context_window={config.context_window}, threshold={threshold_tokens:.0f})")
         return _understand_document_full_text(
             md_text, tree_outline, llm, config,
             max_tokens_override=max_tokens_override,
@@ -315,23 +341,25 @@ def _understand_document(
     if has_structure:
         # 有标题：分段理解
         if config.chunked_enabled:
-            logger.info(f"    Using chunked strategy (est. {estimated_tokens:.0f} tokens)")
+            logger.info(f"  [{pid[:25]}] Using chunked strategy (est. {estimated_tokens:.0f} tokens)")
             return _understand_document_chunked(
                 md_text, tree_outline, abstract_text, methods_text, llm, config,
                 max_tokens_override=max_tokens_override,
+                pid=pid,
             )
         else:
-            logger.info(f"    Chunked strategy disabled, falling back to full-text")
+            logger.info(f"  [{pid[:25]}] Chunked strategy disabled, falling back to full-text")
 
     # 无标题：滑动窗口
     if config.sliding_window_enabled:
-        logger.info(f"    Using sliding-window strategy (est. {estimated_tokens:.0f} tokens)")
+        logger.info(f"  [{pid[:25]}] Using sliding-window strategy (est. {estimated_tokens:.0f} tokens)")
         return _understand_document_sliding_window(
             md_text, tree_outline, abstract_text, methods_text, llm, config,
             max_tokens_override=max_tokens_override,
+            pid=pid,
         )
     else:
-        logger.info(f"    Sliding-window strategy disabled, falling back to full-text")
+        logger.info(f"  [{pid[:25]}] Sliding-window strategy disabled, falling back to full-text")
 
     # 兜底：一次性给全文（可能超上下文，但总比失败好）
     return _understand_document_full_text(
@@ -502,6 +530,7 @@ def parse_node(
         understanding = _understand_document(
             md_text, outline, abstract_text, methods_text, llm, config.parse,
             max_tokens_override=parse_max_tokens,
+            pid=pid,
         )
         if understanding:
             doc_context = understanding.get("doc_context", {})
