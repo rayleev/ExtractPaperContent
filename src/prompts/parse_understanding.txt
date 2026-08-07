@@ -24,121 +24,320 @@
 请输出 JSON 格式，包含两个部分：
 
 ### 1. doc_context（文档上下文）
-- `crops`: 论文中包含的作物列表（如 ["水稻 / Rice", "玉米 / Maize"]）
-- `study_count`: 论文中包含的试验数量（整数）
-- `chunks`: chunk 列表（每个 chunk 包含 id、type、title）
-- `has_supplementary`: 是否有补充材料（布尔值）
-- `table_refs`: 表格引用列表（如 ["表 S1", "表 S2"]）
+
+```json
+{{
+  "crops": ["水稻 / Rice"],
+  "study_list": [
+    {{
+      "study_id": "study_1",
+      "study_title": "试验标题",
+      "factors": [
+        {{"name": "variety", "levels": ["品种A", "品种B"]}},
+        {{"name": "density", "levels": ["25万", "30万"]}}
+      ]
+    }}
+  ],
+  "document_tree": [
+    {{
+      "id": "ch3",
+      "title": "第三章 结果与分析",
+      "level": 1,
+      "children": [
+        {{"id": "ch3_1", "title": "3.1 产量分析", "level": 2}}
+      ]
+    }}
+  ],
+  "has_supplementary": false,
+  "data_file_link": null,
+  "data_file_description": null,
+  "table_refs": [
+    {{
+      "table_id": "表2",
+      "section": "2.3 试验设计",
+      "structure_hint": "行=品种, 列=处理",
+      "data_type": "design"
+    }}
+  ],
+  "variety_groups": [
+    {{
+      "group_name": "供试品种",
+      "shared_across_studies": false,
+      "varieties": [
+        {{"name": "品种A", "is_check": false, "source_tables": ["表1", "表2"]}}
+      ]
+    }}
+  ]
+}}
+```
+
+**字段说明**：
+
+- `crops`: 论文中包含的作物列表
+- `study_list`: 试验列表，每个试验包含因子和水平
+  - `study_id`: 试验唯一标识（如 "study_1"）
+  - `study_title`: 试验标题
+  - `factors`: 试验因子列表，每个因子包含 name（因子名）和 levels（水平列表）
+  - **品种类论文**: `factors: [{"name": "variety", "levels": ["A", "B", "C"]}]`
+  - **管理类论文**: `factors: [{"name": "variety", "levels": ["绥粳4号"]}, {"name": "density", "levels": ["25万", "30万"]}, {"name": "nitrogen", "levels": ["0kg", "50kg"]}]`
+- `document_tree`: 章节标题树（**只含标题，不含正文**），用于定位原文
+  - `id`: 章节唯一标识（如 "ch3_1"）
+  - `title`: 章节标题
+  - `level`: 标题层级（1, 2, 3...）
+  - `children`: 子章节列表
+- `has_supplementary`: 是否有补充材料
 - `data_file_link`: 数据文件链接（如有）
 - `data_file_description`: 数据文件格式说明（如有）
-- `variety_groups`: 品种分组（共用/特有），见下方说明
+- `table_refs`: 表格引用列表
+  - `table_id`: 表格编号（如 "表2"）
+  - `section`: 表格所在章节
+  - `structure_hint`: 表格结构描述（如 "行=品种, 列=处理"）
+  - `data_type`: 数据类型（design / raw / summary / optimal / modeled）
+- `variety_groups`: 品种分组（全局品种索引）
+  - `group_name`: 分组名称（如 "供试品种"、"对照"）
+  - `shared_across_studies`: 是否跨试验共用
+  - `varieties`: 品种列表
+    - `name`: 品种名
+    - `is_check`: 是否是对照（CK）
+    - `source_tables`: 品种出现的表格列表
 
 ### 2. extraction_hints（提取提示）
+
 每个提示包含：
-- `crop`: 该字段属于哪个作物（如 "水稻 / Rice"）
-- `field`: 字段名（如 "variety_name"、"yield_value"、"location" 等）
+
+```json
+{{
+  "crop": "水稻 / Rice",
+  "variety": "品种A",
+  "treatment": "处理描述",
+  "field": "yield_value",
+  "value": "9122.5 kg/hm²",
+  "data_type": "optimal",
+  "location": "ch3_1",
+  "source_table": "表5",
+  "context": "原文片段（50-200字）",
+  "action": "ok",
+  "reason": "判断原因"
+}}
+```
+
+**字段说明**：
+
+- `crop`: 所属作物
+- `variety`: 关联品种名（如 "绥粳4号"）
+- `treatment`: 关联处理描述（如 "密度33.9万穴/hm² N141.2kg/hm²"）
+- `field`: 字段名（见下方重点字段列表）
 - `value`: 字段值（原文中的文本）
+- `data_type`: 数据类型
+  - `raw`: 原始观测值
+  - `optimal`: 最优值（如回归分析得到的最佳组合）
+  - `modeled`: 模型推导值
+  - `summary`: 汇总统计值
+- `location`: 在 document_tree 中的位置（对应 document_tree 的 id，如 "ch3_1"）
+- `source_table`: 来源表格（如 "表5"）
 - `context`: 上下文片段（包含该字段的原文段落，50-200 字）
 - `action`: 后续处理方式
   - `ok`: 信息完整，可直接复用
   - `needs_lookup`: 需要去其他位置查找（如材料方法、补充表）
   - `verify`: 信息不足或模糊，需核实
 - `reason`: 判断原因
-- `shared_across_studies`: 是否跨试验共用（布尔值，可选）
-- `source_tables`: 该品种出现的表格列表（如 ["表3-1", "表4-1"]，可选）
+
+---
+
+## 重点提取字段（必须优先提取）
+
+以下字段是核心数据，必须重点提取：
+
+1. **variety_name**（品种名）— 必须关联到具体作物
+2. **yield_value**（产量值）— 必须关联到具体品种和处理
+3. **location**（试验地点）— 省/市/县/试验站
+4. **trial_year**（试验年份）— 具体年份或年份范围
+5. **plot_size**（小区面积）— 用于产量换算
+6. **planting_density**（种植密度）— 管理类论文核心因子
+7. **fertilizer_N / fertilizer_P / fertilizer_K**（施肥量）— 管理类论文核心因子
+8. **treatment_name**（处理名称）— 每个处理的描述
+
+其他字段按论文中明确写出的提取。
 
 ---
 
 ## 注意事项
 
-1. 作物识别范围：
-   - 识别论文中研究的所有作物（如水稻、玉米、小麦等）
+1. **作物识别范围**：
+   - 识别论文中研究的所有作物
    - 如果论文研究多种作物，crops 列表包含所有作物
 
-2. 字段识别范围（不仅限于品种名）：
-   - variety_name: 品种名（必须关联到具体作物）
-   - yield_value: 产量值（必须关联到具体作物）
-   - location: 试验地点
-   - trial_year: 试验年份
-   - plot_size: 小区面积
-   - 其他论文中明确写出的字段
+2. **study_list 构建规则**：
+   - 品种类论文：1 个 study，variety 为因子
+   - 管理类论文：1 个 study，variety + 管理因子（density/nitrogen 等）为因子
+   - 多试验论文：多个 study，每个独立描述
 
-3. action 判断规则：
-   - `ok`: 具体名称/数值，如"辽梗375"、"612.5 kg/ha"
-   - `needs_lookup`: 代号、引用、模糊数量，如"WYJ23"、"详见表 S1"、"27份材料"
-   - `verify`: 信息不明确，如"未知品种"、"约 X 产量"
+3. **document_tree 构建规则**：
+   - 只输出顶层 section（level=1）及其直接子章节（level=2）
+   - 不需要输出 level=3 及更深层级
+   - 每个节点必须有 id、title、level
 
-4. 补充材料：
+4. **table_refs 构建规则**：
+   - 只记录包含数据结果的表格（跳过纯设计矩阵表）
+   - 必须标注 data_type（design / raw / summary / optimal / modeled）
+
+5. **variety_groups 构建规则**：
+   - 记录论文中**所有涉及的品种**
+   - 如果品种在多个 study 中出现，标记 `shared_across_studies: true`
+   - CK 品种必须标记 `is_check: true`
+
+6. **extraction_hints 构建规则**：
+   - 每条 hint 必须关联 variety（如能识别）
+   - 每条 hint 必须关联 treatment（如能识别）
+   - `location` 字段必须对应 document_tree 中的某个 id
+   - 只提取论文明确写出的信息，不要猜测
+
+7. **data_type 判断规则**：
+   - `raw`: 表格中直接列出的观测值
+   - `optimal`: 回归分析/响应面得到的最优组合值
+   - `modeled`: 模型模拟值
+   - `summary`: 平均值、标准差等统计值
+
+8. **补充材料**：
    - 如果提到"补充材料"、"附件"、"表 S1"等 → has_supplementary = true
-
-5. 只提取论文明确写出的信息，不要猜测。
-
-6. 品种共用识别（重要）：
-   - 识别论文中的对照品种（CK），CK 通常是多个试验共用的
-   - 如果某个品种在多个试验/表格中出现，标记 `shared_across_studies: true`
-   - 在 `variety_groups` 中记录共用品种列表
-   - 示例：论文有 3 个试验，都用"虾稻一号"作为 CK，则：
-     ```json
-     "variety_groups": [
-       {{
-         "group_name": "对照",
-         "shared_across_studies": true,
-         "varieties": [
-           {{"name": "虾稻一号", "is_check": true, "source_tables": ["表3-1", "表4-1", "表5-1"]}}
-         ]
-       }}
-     ]
-     ```
+   - 如果有外部链接数据 → 记录 data_file_link 和 data_file_description
 
 ---
 
 ## 正确示例
 
-### 示例 1：多作物论文
+### 示例 1：品种类论文
 
-论文原文："本研究比较了水稻品种辽梗375和玉米品种郑单978的产量表现"
+论文原文："本研究比较了水稻品种辽梗375、郑单978 和对照虾稻一号的产量表现，试验于 2020 年在南京进行。"
 
 输出：
 ```json
 {{
   "doc_context": {{
-    "crops": ["水稻 / Rice", "玉米 / Maize"],
-    "study_count": 2
+    "crops": ["水稻 / Rice"],
+    "study_list": [
+      {{
+        "study_id": "study_1",
+        "study_title": "水稻品种比较试验",
+        "factors": [
+          {{"name": "variety", "levels": ["辽梗375", "郑单978", "虾稻一号"]}}
+        ]
+      }}
+    ],
+    "document_tree": [
+      {{"id": "ch1", "title": "引言", "level": 1, "children": []}},
+      {{"id": "ch2", "title": "材料与方法", "level": 1, "children": [
+        {{"id": "ch2_1", "title": "2.1 试验材料", "level": 2}}
+      ]}}
+    ],
+    "has_supplementary": false,
+    "data_file_link": null,
+    "data_file_description": null,
+    "table_refs": [],
+    "variety_groups": [
+      {{
+        "group_name": "供试品种",
+        "shared_across_studies": false,
+        "varieties": [
+          {{"name": "辽梗375", "is_check": false, "source_tables": []}},
+          {{"name": "郑单978", "is_check": false, "source_tables": []}},
+          {{"name": "虾稻一号", "is_check": true, "source_tables": []}}
+        ]
+      }}
+    ]
   }},
   "extraction_hints": [
     {{
       "crop": "水稻 / Rice",
+      "variety": "辽梗375",
+      "treatment": "",
       "field": "variety_name",
       "value": "辽梗375",
-      "context": "本研究比较了水稻品种辽梗375和玉米品种郑单978的产量表现",
+      "data_type": "raw",
+      "location": "ch2_1",
+      "source_table": "",
+      "context": "本研究比较了水稻品种辽梗375、郑单978 和对照虾稻一号...",
       "action": "ok",
       "reason": "具体品种名称"
     }},
     {{
-      "crop": "玉米 / Maize",
-      "field": "variety_name",
-      "value": "郑单978",
-      "context": "本研究比较了水稻品种辽梗375和玉米品种郑单978的产量表现",
+      "crop": "水稻 / Rice",
+      "variety": "",
+      "treatment": "",
+      "field": "location",
+      "value": "南京",
+      "data_type": "raw",
+      "location": "ch1",
+      "source_table": "",
+      "context": "试验于 2020 年在南京进行",
       "action": "ok",
-      "reason": "具体品种名称"
+      "reason": "具体试验地点"
     }}
   ]
 }}
 ```
 
-### 示例 2：模糊描述
+### 示例 2：管理类论文
 
-论文原文："27份中稻亲本材料"
+论文原文："试验于 2012 年在黑龙江省进行，供试品种为绥粳4号，设 3 个密度水平和 3 个施肥量水平。"
 
 输出：
 ```json
 {{
-  "crop": "水稻 / Rice",
-  "field": "variety_name",
-  "value": "27份中稻亲本材料",
-  "context": "27份中稻亲本材料",
-  "action": "needs_lookup",
-  "reason": "模糊数量，需查补充表获取具体名称"
+  "doc_context": {{
+    "crops": ["水稻 / Rice"],
+    "study_list": [
+      {{
+        "study_id": "study_1",
+        "study_title": "密度与施肥量对绥粳4号产量的影响",
+        "factors": [
+          {{"name": "variety", "levels": ["绥粳4号"]}},
+          {{"name": "density", "levels": ["25万穴/hm²", "30万穴/hm²", "35万穴/hm²"]}},
+          {{"name": "nitrogen", "levels": ["0kg/hm²", "50kg/hm²", "100kg/hm²"]}}
+        ]
+      }}
+    ],
+    "document_tree": [
+      {{"id": "ch3", "title": "结果与分析", "level": 1, "children": [
+        {{"id": "ch3_1", "title": "3.1 产量分析", "level": 2}}
+      ]}}
+    ],
+    "has_supplementary": false,
+    "data_file_link": null,
+    "data_file_description": null,
+    "table_refs": [
+      {{
+        "table_id": "表5",
+        "section": "3.1 结果与分析",
+        "structure_hint": "行=处理组合, 列=产量/品质指标",
+        "data_type": "optimal"
+      }}
+    ],
+    "variety_groups": [
+      {{
+        "group_name": "供试品种",
+        "shared_across_studies": false,
+        "varieties": [
+          {{"name": "绥粳4号", "is_check": false, "source_tables": ["表1", "表5"]}}
+        ]
+      }}
+    ]
+  }},
+  "extraction_hints": [
+    {{
+      "crop": "水稻 / Rice",
+      "variety": "绥粳4号",
+      "treatment": "密度33.9万穴/hm² N141.2kg/hm²",
+      "field": "yield_value",
+      "value": "9122.5 kg/hm²",
+      "data_type": "optimal",
+      "location": "ch3_1",
+      "source_table": "表5",
+      "context": "绥粳4号在产量最高时求得最佳密度...",
+      "action": "ok",
+      "reason": "最优值，原始观测值见表2-4"
+    }}
+  ]
 }}
 ```
 
@@ -146,45 +345,24 @@
 
 ## 常见错误示例
 
-❌ 错误：crops 只返回单一作物 "水稻 / Rice"，但论文还研究了玉米
-✅ 正确：crops 返回 ["水稻 / Rice", "玉米 / Maize"]
+❌ 错误：study_list 为空
+✅ 正确：至少输出 1 个 study
 
-❌ 错误：hint 没有 crop 字段
-✅ 正确：每个 hint 都有 crop 字段，标识属于哪个作物
+❌ 错误：document_tree 只有标题没有 id
+✅ 正确：每个节点必须有 id、title、level
 
-❌ 错误：把"1950-60s品种"识别为具体品种名，action="ok"
-✅ 正确：识别为模糊描述，action="verify"，reason="年代描述，非具体品种"
+❌ 错误：table_refs 只有 "表2" 没有结构信息
+✅ 正确：必须包含 section、structure_hint、data_type
 
-❌ 错误：把"WYJ23"识别为具体品种名，action="ok"
-✅ 正确：识别为代号，action="needs_lookup"，reason="代号，需查材料方法确认全称"
+❌ 错误：variety_groups 遗漏 CK 品种
+✅ 正确：所有品种都要记录，CK 标记 is_check: true
 
-❌ 错误：遗漏表格引用
-✅ 正确：识别"详见表 S1"，加入 table_refs
+❌ 错误：extraction_hints 没有 variety 关联
+✅ 正确：每条 hint 尽可能关联品种
+
+❌ 错误：把最优值标记为 raw
+✅ 正确：回归分析得到的最优值应标记为 optimal
 
 ---
 
 请输出 JSON：
-
-```json
-{{
-  "doc_context": {{
-    "crops": ["水稻 / Rice", "玉米 / Maize"],
-    "study_count": 0,
-    "chunks": [...],
-    "has_supplementary": false,
-    "table_refs": [],
-    "data_file_link": null,
-    "data_file_description": null
-  }},
-  "extraction_hints": [
-    {{
-      "crop": "水稻 / Rice",
-      "field": "variety_name",
-      "value": "WYJ23",
-      "context": "供试品种为 WYJ23、辽梗375、郑单978...",
-      "action": "needs_lookup",
-      "reason": "代号，需查材料方法确认全称"
-    }}
-  ]
-}}
-```

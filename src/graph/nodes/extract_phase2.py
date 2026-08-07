@@ -16,10 +16,6 @@ from pathlib import Path
 
 from src.config import AppConfig
 from src.clients.llm import LLMClient
-from src.core.chunker import (
-    build_document_tree,
-    find_experiment_sections,
-)
 from src.graph.state import PaperState
 
 logger = logging.getLogger("paper_extractor")
@@ -73,26 +69,25 @@ def extract_phase2_node(
     else:
         category_instruction = ""
 
-    # 构建文档树（复用 parse 节点的树结构，仅作为内容来源）
-    tree = build_document_tree(md_text)
-    actual_exp_sections = find_experiment_sections(tree)
+    # 复用 parse 节点的 document_tree，不再自己重建
+    document_tree = doc_context.get("document_tree", [])
 
     logger.info(
-        f"  [{pid[:25]}] Phase 2: {len(actual_exp_sections)} experiment sections, "
+        f"  [{pid[:25]}] Phase 2: document_tree from parse ({len(document_tree)} top-level sections), "
         f"{len(studies)} from Phase 1, "
         f"{len(extraction_hints)} extraction hints"
     )
 
     # ── Phase 1 优先逻辑 ──
     # 当 Phase 1 成功识别 studies 时，以 Phase 1 的 studies 数量为准
-    # actual_exp_sections 仅作为内容来源，不再决定 study 数量
+    # document_tree 仅作为内容来源，不再决定 study 数量
     use_phase1_studies = len(studies) > 0
     if use_phase1_studies:
         logger.info(f"  [{pid[:25]}] Phase 2: using Phase 1 studies ({len(studies)}) as primary")
     else:
         logger.warning(
             f"  [{pid[:25]}] Phase 2: no Phase 1 studies, "
-            f"falling back to document tree ({len(actual_exp_sections)} sections)"
+            f"falling back to document tree ({len(document_tree)} top-level sections)"
         )
 
     # 构建提取提示文本（含上下文片段）
@@ -130,11 +125,21 @@ def extract_phase2_node(
     has_supplementary = doc_context.get("has_supplementary", False)
     table_refs = doc_context.get("table_refs", [])
     variety_groups = doc_context.get("variety_groups", [])
+
+    # 格式化 table_refs（现在是 dict 列表）
+    if table_refs:
+        table_refs_str = "\n".join(
+            f"  - {t.get('table_id', '')} ({t.get('section', '')}, {t.get('data_type', '')})"
+            for t in table_refs
+        )
+    else:
+        table_refs_str = "无"
+
     supplementary_info = ""
     if has_supplementary:
-        supplementary_info = f"\n**补充材料**: 是（表格引用: {', '.join(table_refs) or '无'}）"
+        supplementary_info = f"\n**补充材料**: 是（表格引用:\n{table_refs_str}）"
     elif table_refs:
-        supplementary_info = f"\n**表格引用**: {', '.join(table_refs)}"
+        supplementary_info = f"\n**表格引用**:\n{table_refs_str}"
 
     # 共用品种信息
     shared_varieties_info = ""
@@ -161,7 +166,7 @@ def extract_phase2_node(
         """
         从 extraction_hints 构建相关内容文本。
 
-        每个 hint 包含 context（字段出现的原文片段）和 source_tables。
+        每个 hint 包含 context（字段出现的原文片段）和 source_table/source_tables。
         去重后拼接，作为 LLM 输入（替代整篇论文）。
         """
         if not hints:
@@ -177,9 +182,15 @@ def extract_phase2_node(
                 continue
             seen_contexts.add(context)
 
-            # 添加 source_tables 信息（如果有）
+            # 添加 source_table 信息（支持新格式 source_table 字符串和旧格式 source_tables 列表）
+            source_table = hint.get("source_table", "")
             source_tables = hint.get("source_tables", [])
-            table_info = f" [来源: {', '.join(source_tables)}]" if source_tables else ""
+            if source_table:
+                table_info = f" [来源: {source_table}]"
+            elif source_tables:
+                table_info = f" [来源: {', '.join(source_tables)}]"
+            else:
+                table_info = ""
 
             part = f"{context}{table_info}"
             if total_chars + len(part) > max_chars:
@@ -274,11 +285,11 @@ def extract_phase2_node(
                 })
         logger.info(f"  [{pid[:25]}] Phase 2: done, {len(phase2_results)} study/studies processed")
     else:
-        # ── Fallback: 使用文档树 ──
-        logger.info(f"  [{pid[:25]}] Phase 2: processing {len(actual_exp_sections)} study/studies from document tree")
-        for i, exp_node in enumerate(actual_exp_sections):
-            study_title = exp_node.title or ""
-            logger.info(f"  [{pid[:25]}] Study {i+1}/{len(actual_exp_sections)}: '{study_title[:50]}' → calling LLM...")
+        # ── Fallback: 使用 parse 的 document_tree ──
+        logger.info(f"  [{pid[:25]}] Phase 2: processing {len(document_tree)} study/studies from document tree")
+        for i, section in enumerate(document_tree):
+            study_title = section.get("title", "")
+            logger.info(f"  [{pid[:25]}] Study {i+1}/{len(document_tree)}: '{study_title[:50]}' → calling LLM...")
             study_context = f"试验名称: {study_title}"
 
             # 优先使用 hints 构建相关内容
@@ -316,7 +327,7 @@ def extract_phase2_node(
             )
 
             max_tokens = max(config.llm.max_tokens, 8192)
-            logger.info(f"  [{pid[:25]}] Study {i+1}/{len(actual_exp_sections)}: LLM calling (max_tokens={max_tokens})...")
+            logger.info(f"  [{pid[:25]}] Study {i+1}/{len(document_tree)}: LLM calling (max_tokens={max_tokens})...")
             study_data = llm.call_json(prompt, max_tokens=max_tokens, node_name="extract_phase2")
 
             if study_data:
@@ -326,12 +337,12 @@ def extract_phase2_node(
                     "varieties": varieties,
                 })
                 logger.info(
-                    f"  [{pid[:25]}] Study {i+1}/{len(actual_exp_sections)}: '{study_title[:40]}' → "
+                    f"  [{pid[:25]}] Study {i+1}/{len(document_tree)}: '{study_title[:40]}' → "
                     f"{len(varieties)} varieties"
                 )
             else:
                 logger.warning(
-                    f"  [{pid[:25]}] Study {i+1}/{len(actual_exp_sections)}: '{study_title[:40]}' → FAILED (LLM超时/无返回)"
+                    f"  [{pid[:25]}] Study {i+1}/{len(document_tree)}: '{study_title[:40]}' → FAILED (LLM超时/无返回)"
                 )
                 phase2_results.append({
                     "study_index": i,

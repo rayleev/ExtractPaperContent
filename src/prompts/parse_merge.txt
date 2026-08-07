@@ -14,17 +14,19 @@
 
 ### 1. doc_context（文档上下文）
 - 合并所有分段的 crops 列表（去重）
-- 合并所有分段的 chunk 列表
-- 去重 table_refs
-- 取多数一致的 study_count
+- 合并所有分段的 document_tree（取最完整的版本，不重复）
+- 去重 table_refs（基于 table_id）
+- 合并所有分段的 study_list（取最完整的版本）
 - 如果任一分段有 data_file_link，保留该链接
+- 如果任一分段有 data_file_description，保留该描述
 - 合并所有分段的 variety_groups（去重，按品种名称合并）
 
 ### 2. extraction_hints（提取提示）
 - 合并所有分段的提示
-- 去重（相同 field + value + crop 只保留一个）
+- 去重（相同 field + value + crop + variety + treatment 只保留一个）
 - 如果不同分段对同一字段有不同理解，取最详细的版本
 - 保留 crop 字段（标识该 hint 属于哪个作物）
+- 合并 source_table/source_tables 信息
 
 ---
 
@@ -35,6 +37,8 @@
 3. 合并后保持 JSON 结构一致
 4. context 字段保留原文片段，不要修改
 5. 每个 hint 必须保留 crop 字段
+6. study_list 取最完整的版本（factors 和 levels 最详细的）
+7. document_tree 取最完整的版本（层级最深的）
 
 ---
 
@@ -44,21 +48,59 @@
 {{
   "doc_context": {{
     "crops": ["水稻 / Rice", "玉米 / Maize"],
-    "study_count": 0,
-    "chunks": [...],
+    "study_list": [
+      {{
+        "study_id": "study_1",
+        "study_title": "试验标题",
+        "factors": [
+          {{"name": "variety", "levels": ["品种A", "品种B"]}}
+        ]
+      }}
+    ],
+    "document_tree": [
+      {{
+        "id": "ch3",
+        "title": "第三章 结果与分析",
+        "level": 1,
+        "children": [
+          {{"id": "ch3_1", "title": "3.1 产量分析", "level": 2}}
+        ]
+      }}
+    ],
     "has_supplementary": false,
-    "table_refs": [],
     "data_file_link": null,
-    "data_file_description": null
+    "data_file_description": null,
+    "table_refs": [
+      {{
+        "table_id": "表2",
+        "section": "2.3 试验设计",
+        "structure_hint": "行=品种, 列=处理",
+        "data_type": "design"
+      }}
+    ],
+    "variety_groups": [
+      {{
+        "group_name": "供试品种",
+        "shared_across_studies": false,
+        "varieties": [
+          {{"name": "品种A", "is_check": false, "source_tables": ["表1"]}}
+        ]
+      }}
+    ]
   }},
   "extraction_hints": [
     {{
       "crop": "水稻 / Rice",
-      "field": "variety_name",
-      "value": "WYJ23",
-      "context": "供试品种为 WYJ23、辽梗375、郑单978...",
+      "variety": "品种A",
+      "treatment": "处理描述",
+      "field": "yield_value",
+      "value": "9122.5 kg/hm²",
+      "data_type": "raw",
+      "location": "ch3_1",
+      "source_table": "表5",
+      "context": "产量结果...",
       "action": "needs_lookup",
-      "reason": "代号，需查材料方法确认全称"
+      "reason": "需查材料方法确认全称"
     }}
   ]
 }}

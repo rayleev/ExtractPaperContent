@@ -280,7 +280,7 @@ def _check_parse_quality(
     Returns:
         {
             "has_crop": bool,
-            "has_study_count": bool,
+            "has_study_list": bool,
             "has_hints": bool,
             "overall": "ok" | "weak" | "failed"
         }
@@ -293,12 +293,21 @@ def _check_parse_quality(
     else:
         has_crop = bool(crops_val) and crops_val not in (None, "", "NONE", "null")
         crops_val_display = crops_val or "NONE"
-    has_study_count = doc_context.get("study_count", 0) > 0
+
+    # 支持 study_list（新格式）和 study_count（旧格式兼容）
+    study_list = doc_context.get("study_list", [])
+    if isinstance(study_list, list):
+        has_study_list = len(study_list) > 0
+        study_count_display = len(study_list)
+    else:
+        has_study_list = doc_context.get("study_count", 0) > 0
+        study_count_display = doc_context.get("study_count", 0)
+
     has_hints = len(extraction_hints) > 0
 
-    if has_crop and has_study_count and has_hints:
+    if has_crop and has_study_list and has_hints:
         overall = "ok"
-    elif has_crop or has_study_count:
+    elif has_crop or has_study_list:
         overall = "weak"
     else:
         overall = "failed"
@@ -307,13 +316,13 @@ def _check_parse_quality(
         logger.warning(
             f"  [{pid[:25]}] Parse quality: {overall} "
             f"(crop={crops_val_display}, "
-            f"study_count={doc_context.get('study_count', 0)}, "
+            f"studies={study_count_display}, "
             f"hints={len(extraction_hints)})"
         )
 
     return {
         "has_crop": has_crop,
-        "has_study_count": has_study_count,
+        "has_study_list": has_study_list,
         "has_hints": has_hints,
         "overall": overall,
     }
@@ -418,8 +427,10 @@ def parse_node(
             # 根据 extraction_hints 判断是否需要 lookup phase
             needs_lookup = any(h.get("action") == "needs_lookup" for h in extraction_hints)
             crops_display = doc_context.get("crops") or doc_context.get("crop") or "?"
+            study_list = doc_context.get("study_list", [])
+            study_count = len(study_list) if isinstance(study_list, list) else doc_context.get("study_count", 0)
             logger.info(f"  [{pid[:25]}] Document understood: {crops_display}, "
-                       f"{doc_context.get('study_count', '?')} studies, "
+                       f"{study_count} studies, "
                        f"{len(extraction_hints)} hints, "
                        f"needs_lookup={needs_lookup}, "
                        f"max_tokens={parse_max_tokens}")

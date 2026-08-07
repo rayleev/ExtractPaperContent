@@ -70,7 +70,29 @@ def extract_phase1_node(
 
         crops_text = ", ".join(crops) if crops else doc_context.get('crop', '')
 
+        # 格式化 study_list 用于显示
+        study_list = doc_context.get("study_list", [])
+        if isinstance(study_list, list) and study_list:
+            studies_display = "\n".join(
+                f"  - {s.get('study_id', '?')}: {s.get('study_title', '')}"
+                for s in study_list
+            )
+            studies_text = f"{len(study_list)} 个试验:\n{studies_display}"
+        else:
+            studies_text = str(doc_context.get("study_count", "未知"))
+
+        # 格式化 table_refs（现在是 dict 列表）
+        table_refs = doc_context.get("table_refs", [])
+        if table_refs:
+            table_refs_text = "\n".join(
+                f"  - {t.get('table_id', '')} ({t.get('section', '')}, {t.get('data_type', '')})"
+                for t in table_refs
+            )
+        else:
+            table_refs_text = "无"
+
         auxiliary_context = f"""
+
 ---
 
 ## 辅助上下文（parse 节点输出）
@@ -78,9 +100,10 @@ def extract_phase1_node(
 以下信息已由 parse 节点识别，请**复用**并**验证**：
 
 **作物**: {crops_text}
-**Study 数量**: {doc_context.get('study_count', '')}
+**试验列表**: {studies_text}
 **补充材料**: {'是' if doc_context.get('has_supplementary') else '否'}
-**表格引用**: {', '.join(doc_context.get('table_refs', [])) or '无'}
+**表格引用**:
+{table_refs_text}
 **数据文件链接**: {doc_context.get('data_file_link', '无')}
 
 ## 提取提示（extraction_hints）
