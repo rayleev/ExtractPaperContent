@@ -6,77 +6,47 @@
 
 ## 架构概览
 
-采用 LangGraph StateGraph 有向图架构，每篇论文独立走完整条流程。所有输出统一写入 PostgreSQL 数据库，支持大规模存储和查询。
+采用 LangGraph StateGraph 有向图架构，每篇论文独立走完整条流程。所有输出统一写入 PostgreSQL 数据库，支持大规模存储与多实例并发。
+
+### Graph 流程
+
+`search`（论文搜索/导入）发生在图之外，由编排层（BatchOrchestrator / HTTP API）完成并写入 `pe_reg_paper_status`；每篇论文随后进入下述图流程：
 
 ```
-论文 PDF / Semantic Scholar API
-       │
-       ▼
-┌──────────────┐
-│  search       │  搜索/导入论文（Semantic Scholar API）
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│  classify     │  LLM 分类（仅用元数据，支持多作物配置）
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│  filter       │  筛选：China + 可提取类别 + 目标作物
-└──────┬───────┘  ──→ [不可提取] → END
-       ▼
-┌──────────────┐
-│  download     │  下载 PDF（Semantic Scholar）
-└──────┬───────┘  ──→ [无 PDF] → END
-       ▼
-┌──────────────┐
-│  parse        │  全文理解（LLM 理解全文，识别品种共用关系）
-└──────┬───────┘  ──→ [解析失败] → END
-       ▼
-┌──────────────┐
-│  extract_p1   │  Phase 1: 论文级+试验级提取
-└──────┬───────┘  ──→ [Phase1失败] → END
-       ▼
-┌──────────────┐
-│  extract_p2   │  Phase 2: 品种级提取（逐试验，利用共用品种信息）
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│  lookup       │  补充查找（处理 needs_lookup 的项，条件触发）
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│  postprocess  │  Pydantic验证 + 产量换算 + 过滤 + 回填
-└──────┬───────┘  ──→ [非中国] → END
-       ▼
-┌──────────────┐
-│  geocode      │  地理编码（查找表 → 天地图 → 百度 → 省会兜底）
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│  evidence     │  证据验证（批量验证重要字段的原文证据）
-└──────┬───────┘
-       ▼
-┌──────────────┐
-│  validate     │  规则验证（产量换算一致性、范围检查、增产率校验等）
-└──────┬───────┘
-       ▼  ──→ [无异常] → END
-┌──────────────────┐
-│  targeted_validate│  针对性 LLM 验证（仅验证规则标记为异常的记录）
-└──────┬───────────┘
-       ▼
-      END → PostgreSQL DB + CSV 导出
+classify → filter → download → parse → extract_phase1 → extract_phase2
+  → [lookup] → postprocess → geocode → evidence → validate → [targeted_llm_validate] → END
 ```
+
+各节点条件路由：
+
+| 节点 | 说明 | 提前终止条件 |
+|------|------|-------------|
+| `classify` | LLM 分类（仅用元数据，支持多作物配置） | 分类失败 → END |
+| `filter` | 筛选：可提取类别 + 目标作物 + 国家粗筛 | 不可提取 → END |
+| `download` | 下载 PDF | 无 PDF → END |
+| `parse` | 全文理解（LLM 理解全文，识别品种共用关系） | 解析失败 / 质量过低 → END |
+| `extract_phase1` | Phase 1：论文级 + 试验级提取 | 失败 → END |
+| `extract_phase2` | Phase 2：品种级提取（逐试验，利用共用品种信息） | — |
+| `lookup` | 补充查找（`parse` 输出 `needs_lookup` 时条件触发） | — |
+| `postprocess` | Pydantic 验证 + 产量换算 + 过滤 + 回填 | 全文复核为非中国 → END |
+| `geocode` | 地理编码（查找表 → 天地图 → 百度 → 省会兜底） | — |
+| `evidence` | 证据验证（批量验证重要字段的原文证据） | — |
+| `validate` | 规则验证（纯代码，不耗 token） | — |
+| `targeted_llm_validate` | 仅对规则标记为可疑的记录做 LLM 核对（条件触发） | — |
+
+> 分步执行：通过 `PaperState.stop_after` 字段控制在指定节点后提前终止；`--step` 参数即基于此实现（见下方 CLI）。
 
 **核心特性：**
 
 - **全文理解**：parse 节点使用 LLM 理解全文，识别品种共用关系（CK 对照）
 - **多作物支持**：config.yaml 配置目标作物，支持按作物拆分 study
 - **共用品种识别**：自动识别跨试验共用的对照品种，统一名称
+- **两阶段提取**：Phase 1（论文/试验级）+ Phase 2（品种级，主要瓶颈，逐试验调用）
 - **证据验证**：evidence 节点批量验证重要字段的原文证据
-- **单位换算可配置**：config.yaml 配置单位换算表，支持扩展
-- **规则验证编码**：validation_issues 使用编码（如 YIELD_001）便于查询
+- **单位换算可配置**：config.yaml 配置单位换算表，程序自动换算为 kg/ha
+- **规则验证编码**：validation_issues 使用编码（如 `YIELD_001`）便于查询
 - **HTTP API**：FastAPI 提供 REST API 和监控面板
-- **断点续跑**：LangGraph checkpoint，崩溃后从断点恢复
+- **断点续跑**：LangGraph checkpoint（SQLite），崩溃后从断点恢复
 - **滑动窗口并发**：ThreadPoolExecutor 始终保持 N 个任务在跑
 - **多实例部署**：通过 `INSTANCE_ID` 环境变量标识，多容器共享 PostgreSQL 协调任务
 
@@ -88,21 +58,23 @@ extract4paperQC/
 ├── config.yaml                     # 配置文件（本地运行，从 config.yaml.example 复制）
 ├── config.yaml.example             # 配置文件模板
 ├── .env.example                    # Docker 部署环境变量模板
+├── .dockerignore
 ├── requirements.txt                # Python 依赖
 ├── Dockerfile                      # Docker 构建
 ├── docker-compose.yml              # Docker Compose 多实例部署（3 实例）
-├── woodpecker.yml                  # Woodpecker CI 流水线（build → deploy → 健康检查）
+├── .woodpecker.yml                 # Woodpecker CI 流水线（build → deploy → 健康检查）
+├── PROJECT_MEMORY.md               # 项目部署/排障备忘
 ├── src/
 │   ├── config.py                   # 配置加载 (AppConfig)，环境变量 > config.yaml > 默认值
 │   ├── clients/
-│   │   ├── mineru.py               # MinerU PDF 解析客户端
-│   │   ├── llm.py                  # LLM API 客户端
-│   │   └── semantic_scholar.py     # Semantic Scholar API 客户端
+│   │   ├── mineru.py               # MinerU PDF 解析客户端（兼 Semantic Scholar 代理）
+│   │   ├── llm.py                  # LLM API 客户端（OpenAI 兼容）
+│   │   └── semantic_scholar.py     # Semantic Scholar 客户端（搜索 + PDF 下载）
 │   ├── core/
 │   │   ├── loader.py               # 论文发现与元数据匹配
-│   │   ├── chunker.py              # 文档层级树构建器
-│   │   ├── geocoder.py             # 地理编码（4 级策略）
-│   │   ├── constants.py            # 常量定义
+│   │   ├── chunker.py              # 文档层级树构建器（分段/滑动窗口）
+│   │   ├── geocoder.py             # 地理编码（4 级策略 + 海拔 3 级）
+│   │   ├── constants.py            # 常量定义（国家/地理关键词）
 │   │   └── models.py               # Pydantic 数据模型 + 产量换算
 │   ├── graph/
 │   │   ├── state.py                # PaperState 状态定义
@@ -112,8 +84,8 @@ extract4paperQC/
 │   │   ├── rules.py                # 规则验证引擎（纯代码）
 │   │   ├── country_utils.py        # 国家判断工具
 │   │   ├── postprocess_utils.py    # 后处理工具（过滤/回填）
-│   │   └── nodes/                  # 节点函数
-│   │       ├── search.py           # 搜索/导入论文（独立函数，非图节点）
+│   │   └── nodes/                  # 图节点函数
+│   │       ├── search.py           # 搜索/导入论文（编排层调用，非图节点）
 │   │       ├── classify.py         # 分类节点
 │   │       ├── filter.py           # 过滤节点
 │   │       ├── download.py         # 下载节点
@@ -141,16 +113,19 @@ extract4paperQC/
 │   │   └── static/dashboard.html   # 监控面板
 │   └── output/
 │       └── statistics.py           # 覆盖率统计
-├── docs/                           # 论文数据（PDF/PDF/，meta/）
-├── migrations/                     # 数据库迁移脚本
-│   ├── add_parse_context.py        # 添加 parse_context JSONB 字段
-│   ├── fix_schema.py               # 修复 schema
-│   └── update_schema.py            # 更新 schema
+├── docs/                           # 论文数据（PDF/ 子目录，meta/ 元数据）
+├── migrations/                     # 数据库 schema 迁移脚本
+│   ├── schema.py                   # 目标 schema 定义
+│   └── migrate_to_new_schema.py    # 迁移执行脚本
 └── tests/                          # 测试工具（本地使用）
-    ├── import_by_id.py             # 通过 SS paper_id 导入
-    ├── init_db.py                  # 数据库初始化
-    ├── process_from_db.py          # 从数据库处理 pending 论文
-    └── test_yield_convert.py       # 产量单位换算测试
+    ├── init_db.py                  # 数据库初始化（建表 + 表/字段注释）
+    ├── import_by_id.py             # 通过 SS paper_id 导入论文
+    ├── process_from_db.py          # 从数据库 pending 论文继续处理
+    ├── test_yield_convert.py       # 产量单位换算测试
+    ├── test_llm.py                 # LLM 连通性/返回自测
+    ├── query_npk.py                # 查询 NPK 数据（排障用）
+    ├── reset_management_yield.py   # 重置 management_yield 论文状态
+    └── _count_placeholders.sh / _ssh_view_fail.sh   # 临时排障脚本
 ```
 
 ## 安装
@@ -165,8 +140,8 @@ cp config.yaml.example config.yaml   # 然后填入实际配置
 | 服务 | 用途 | 配置 | 必须 |
 |------|------|------|------|
 | MinerU | PDF → Markdown 解析 | `config.yaml` → `mineru` | 是 |
-| LLM API (OpenAI 兼容) | 分类 + 提取 | `config.yaml` → `llm` | 是 |
-| Semantic Scholar API | 论文搜索 + PDF 下载 | `config.yaml` → `semantic_scholar`（缺省回退 `mineru`） | 否 |
+| LLM API (OpenAI 兼容) | 分类 + 提取 + 证据验证 | `config.yaml` → `llm` | 是 |
+| Semantic Scholar | 论文搜索 + PDF 下载 | 缺省复用 `mineru`（共用服务与 Key） | 否 |
 | 天地图 API | 地理编码（推荐） | `config.yaml` → `geocoding.tianditu_tk` | 是 |
 | 百度地图 API | 地理编码（备选） | `config.yaml` → `geocoding.baidu_api_key` | 否 |
 | Open-Meteo | 海拔（无需 Key） | 公共服务 | 是（兜底用） |
@@ -181,7 +156,7 @@ cp config.yaml.example config.yaml   # 然后填入实际配置
 python run.py
 
 # 分步执行（自动补全前置步骤）
-python run.py --step search            # 仅搜索论文（写入 paper_status 表）
+python run.py --step search            # 仅搜索论文（写入 pe_reg_paper_status）
 python run.py --step classify          # 仅分类
 python run.py --step download          # 分类 + 下载 PDF
 python run.py --step parse             # 分类 + 解析 PDF
@@ -201,10 +176,11 @@ python run.py --serve --host 0.0.0.0 --port 8000
 ### 数据库初始化与导入
 
 ```bash
-python tests/init_db.py                # 建表 + 写入数据字典
+python tests/init_db.py                # 建表 + 写入表/字段注释（PG COMMENT）
 python tests/import_by_id.py <ss_paper_id>   # 通过 SS paper_id 导入论文
 python tests/process_from_db.py        # 从数据库 pending 论文继续处理
 python tests/test_yield_convert.py     # 产量单位换算自测
+python tests/test_llm.py               # LLM 连通性/返回自测
 ```
 
 ### HTTP API
@@ -234,18 +210,18 @@ REST API 端点（前缀 `/api`）：
 
 ## 配置说明
 
-`config.yaml` 中的关键配置：
+`config.yaml` 中的关键配置（完整字段以 `config.yaml.example` 为准）：
 
 ```yaml
 # 路径配置
 paths:
   base_dir: "."
-  papers_dir: "docs"                    # PDF 子目录 docs/PDF/，元数据 docs/meta/
-  cache_dir: "cache"
-  parsed_dir: "output/parsed"
-  runs_dir: "output/runs"
+  papers_dir: "docs"                    # PDF 直接放此目录下
+  cache_dir: "cache"                    # 运行缓存（断点续跑）
+  parsed_dir: "output/parsed"           # MinerU 解析后的 markdown
+  runs_dir: "output/runs"               # 每次运行的输出目录: runs/{时间戳}/
 
-# MinerU PDF 解析服务
+# MinerU PDF 解析服务（同时用于 Semantic Scholar 论文搜索 + PDF 下载）
 mineru:
   base_url: "http://your-mineru-host"
   api_key: "your-key"
@@ -253,26 +229,25 @@ mineru:
   poll_interval: 5
   poll_timeout: 600
   return_md: true
-  formula_enable: true
-  table_enable: true
   parse_method: "ocr"                   # auto / txt / ocr
 
 # LLM 服务
 llm:
   base_url: "http://your-llm-host/v1"
   api_key: "your-key"
-  model: "DSv4-flash"
-  max_tokens: 8192
+  model: "glm-52"
+  max_tokens: 16384                     # 默认输出上限（token）
   temperature: 0.1
   max_retries: 5
-  timeout: 600
-
-# Semantic Scholar API（可选；缺省时复用 mineru.base_url + mineru.api_key）
-semantic_scholar:
-  base_url: "http://your-mineru-host"
-  api_key: "your-key"
-  max_retries: 5
-  request_interval: 0.3
+  timeout: 1800                         # 请求超时（秒）— parse/extract 大论文需要更长
+  classify_max_tokens: 1000             # 分类节点输出上限
+  evidence_max_tokens: 2000             # 证据验证节点输出上限
+  validate_max_tokens: 200              # 规则验证节点输出上限
+  # 深度思考（thinking）配置 — 仅支持 thinking 的模型生效（chat_template_kwargs 格式）
+  thinking: {"enable_thinking": false}  # 全局关闭深度思考
+  thinking_overrides:                   # 节点级覆盖（优先级高于全局）
+    parse: {"enable_thinking": false}
+    extract_phase2: {"enable_thinking": false}
 
 # 提取参数
 extraction:
@@ -308,25 +283,28 @@ evidence_validation:
   fields:
     - field: crop_species
       required: true
+      description: "作物类型"
     - field: variety_name
       required: true
+      description: "品种名称"
     - field: yield_raw_value
       required: true
-    - field: n_raw_value
+      description: "产量值"
+    - field: yield_raw_unit
+      required: true
+      description: "产量单位"
+    - field: trial_year
       required: false
-    - field: p_raw_value
-      required: false
-    - field: k_raw_value
-      required: false
+      description: "试验年份"
 
 # parse 节点配置
 parse:
+  context_window: 1000000               # LLM 上下文窗口大小（token），1M 模型设 1000000
+  full_text_threshold: 0.5              # 短论文阈值（< 上下文窗口 * 阈值 → 一次性给全文）
   chunked_enabled: true                 # 分段理解策略（长论文 + 有章节标题）
   sliding_window_enabled: true          # 滑动窗口策略（长论文 + 无章节标题）
-  full_text_threshold: 0.5              # 短论文阈值（< 上下文窗口 * 阈值 → 一次性给全文）
-  context_window: 128000                # LLM 上下文窗口大小（token）
-  sliding_window_size: 8000             # 滑动窗口大小（字符）
-  sliding_window_step: 6400             # 滑动窗口步长（字符，20% 重叠）
+  sliding_window_size: 50000            # 滑动窗口大小（字符）
+  sliding_window_step: 40000            # 滑动窗口步长（字符，20% 重叠）
 
 # 地理编码
 geocoding:
@@ -361,7 +339,7 @@ logging:
 | 环境变量 | 用途 |
 |---|---|
 | `LLM_API_KEY` / `LLM_BASE_URL` | LLM 服务密钥/地址 |
-| `MINERU_API_KEY` / `MINERU_BASE_URL` | MinerU 服务密钥/地址 |
+| `MINERU_API_KEY` / `MINERU_BASE_URL` | MinerU 服务密钥/地址（兼 Semantic Scholar） |
 | `SS_API_KEY` / `SS_BASE_URL` | Semantic Scholar 服务密钥/地址 |
 | `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` | PostgreSQL 连接 |
 | `TIANDITU_TK` / `BAIDU_API_KEY` | 地理编码密钥 |
@@ -385,7 +363,11 @@ logging:
 | `pe_aud_evidence` | 证据验证明细（字段来源追溯） |
 | `pe_reg_paper_status` | 论文处理状态（兼任务协调注册表 + 搜索元数据存储） |
 | `pe_log_pdf_missing` | 无法获取 PDF 的论文记录 |
-| `_schema_doc` | 字段数据字典（DB 内查询） |
+| `pe_aud_paper_coverage` | 每篇论文字段覆盖率（统计，按 `run_id` 分批） |
+| `pe_aud_field_coverage` | 每个字段全局命中率（统计，按 `run_id` 分批） |
+| `pe_aud_stats_summary` | 批次总体统计（一行一个 `run_id`） |
+
+> 表/字段注释通过 PG 原生 `COMMENT ON TABLE/COLUMN` 维护，在数据库内可查，不依赖外部字典表。
 
 ### 验证问题编码
 
@@ -402,7 +384,7 @@ logging:
 | `YIELD_004` | issue | yield_raw_unit 为 %（增产比例，非实际产量） |
 | `SOURCE_001` | warning | source_location 为空 |
 | `CONSISTENCY_001` | warning | 跨 study 产量波动 >50% |
-| `NUTRIENT_001` | warning | treatment_name 存在但 N/P/K raw 全空（该处理声称是处理但未抄到任何养分量） |
+| `NUTRIENT_001` | warning | treatment_name 存在但 N/P/K raw 全空 |
 | `TREATMENT_001` | warning | management_yield 论文缺少 treatment_name |
 
 ## 论文分类标准
@@ -417,7 +399,7 @@ logging:
 
 ## 单位换算
 
-LLM 提取原始产量值和单位，程序自动换算为 kg/ha。换算表在 `config.yaml` 中配置，支持扩展。
+LLM 提取原始产量值和单位，程序自动换算为 kg/ha。换算表在 `config.yaml → unit_conversion` 中配置，支持扩展（`mass_to_kg` / `area_to_ha`）。
 
 ### 支持的单位格式
 
@@ -464,25 +446,27 @@ docker run -d --name extractor \
 
 ### 多实例（docker-compose）
 
-`docker-compose.yml` 默认启动 3 个 extractor 实例，共享 PostgreSQL 与挂载目录，各自独立 cache 目录避免 SQLite 锁冲突：
+`docker-compose.yml` 默认启动 3 个 extractor 实例，共享 PostgreSQL 与 bind mount 目录，各自独立 cache 目录避免 SQLite 锁冲突：
 
 ```bash
-cp .env.example .env             # 填入 DB_PASSWORD / LLM_API_KEY_1/2/3 等
+cp .env.example .env             # 填入 DB_HOST/DB_PASSWORD、LLM_API_KEY_1/2/3、MINERU_API_KEY_1/2/3 等
 docker compose up -d --build
 docker compose logs -f
 docker compose down
 ```
+
+部署/配置统一在宿主机 `/home/root01/deploy/paper-extractor/` 下（config.yaml、.env、docs、output、cache-1/2/3）。
 
 端口映射（宿主机:容器）：
 - `extractor-1` → `8004:8000`
 - `extractor-2` → `8002:8000`
 - `extractor-3` → `8003:8000`
 
-每个实例通过 `INSTANCE_ID` 环境变量标识，`BatchOrchestrator.claim_tasks` 实现 multi-instance 任务领取（processing 状态论文锁定到具体实例，避免重复处理）。
+每个实例通过 `INSTANCE_ID` 环境变量标识，`BatchOrchestrator.claim_tasks` 实现 multi-instance 任务领取（processing 状态论文锁定到具体实例，避免重复处理）。每个实例使用各自的 LLM API Key（`LLM_API_KEY_1/2/3`）。
 
 ### Woodpecker CI
 
-`woodpecker.yml` 定义 `build → deploy` 流水线：
+`.woodpecker.yml` 定义 `build → deploy` 流水线：
 - 构建镜像 → 写入 secrets 注入的 `config.yaml` / `.env` → 启动 docker compose → 健康检查（最多 60s）→ 失败回滚到旧镜像。
 
 所需 Woodpecker secrets：`CONFIG_YAML`、`ENV_FILE`。

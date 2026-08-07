@@ -3,7 +3,8 @@
 
 可提取条件：
   1. category 在 extractable_categories 配置列表中
-  2. 国家粗筛（基于摘要的 research_country）：
+  2. 作物筛选：论文作物须与 config.extraction.crops 目标列表有交集（多作物支持）
+  3. 国家粗筛（基于摘要的 research_country）：
      - 明确中国（含台湾）        → 通过
      - 不确定（Unknown/空）      → 放行，提取后由 postprocess 基于全文复核
      - 明确非中国               → 直接 skip（节省提取成本）

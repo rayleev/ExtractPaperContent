@@ -4,18 +4,19 @@
 所有提取结果、分类结果、验证报告、覆盖率统计统一写入 PostgreSQL 数据库，
 支持 1500 万级论文的大规模存储、多实例并发写入和下游对接。
 
-数据库表结构：
-  papers             论文级数据（一篇一行）
-  studies            试验级数据（一篇论文多行）
-  varieties          品种产量数据（主数据表，一行一个品种）
-  varieties_flat     品种产量宽表（交接用）
-  classification     论文分类结果
-  validation_issues  验证问题明细（扁平化）
-  paper_status       论文处理状态（兼任务协调注册表）
-  pdf_missing        无法获取 PDF 的论文记录
-  paper_coverage     每篇论文字段覆盖率（统计）
-  field_coverage     每个字段全局命中率（统计）
-  stats_summary      批次总体统计（统计）
+数据库表结构（表名统一使用 pe_ 前缀分组，见 AGENTS.md）：
+  pe_core_papers          论文级数据（一篇一行）
+  pe_core_studies         试验级数据（一篇论文多行）
+  pe_core_varieties       品种产量数据（主数据表，一行一个品种）
+  varieties_flat          品种产量宽表（交接用）
+  pe_aud_classification   论文分类结果
+  pe_aud_validation_issues 验证问题明细（扁平化）
+  pe_aud_evidence         证据验证明细（字段来源追溯）
+  pe_reg_paper_status     论文处理状态（兼任务协调注册表）
+  pe_log_pdf_missing      无法获取 PDF 的论文记录
+  pe_aud_paper_coverage   每篇论文字段覆盖率（统计）
+  pe_aud_field_coverage   每个字段全局命中率（统计）
+  pe_aud_stats_summary    批次总体统计（统计）
 
 用法：
   conn = get_connection("postgresql://user:pass@host:5432/dbname")
