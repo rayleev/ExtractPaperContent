@@ -78,8 +78,8 @@
   - `study_id`: 试验唯一标识（如 "study_1"）
   - `study_title`: 试验标题
   - `factors`: 试验因子列表，每个因子包含 name（因子名）和 levels（水平列表）
-  - **品种类论文**: `factors: [{"name": "variety", "levels": ["A", "B", "C"]}]`
-  - **管理类论文**: `factors: [{"name": "variety", "levels": ["绥粳4号"]}, {"name": "density", "levels": ["25万", "30万"]}, {"name": "nitrogen", "levels": ["0kg", "50kg"]}]`
+  - **品种类论文**: `factors: [{{"name": "variety", "levels": ["A", "B", "C"]}}]`
+  - **管理类论文**: `factors: [{{"name": "variety", "levels": ["绥粳4号"]}}, {{"name": "density", "levels": ["25万", "30万"]}}, {{"name": "nitrogen", "levels": ["0kg", "50kg"]}}]`
 - `document_tree`: 章节标题树（**只含标题，不含正文**），用于定位原文
   - `id`: 章节唯一标识（如 "ch3_1"）
   - `title`: 章节标题
