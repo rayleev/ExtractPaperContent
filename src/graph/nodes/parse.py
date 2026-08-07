@@ -54,6 +54,103 @@ def _understand_document_full_text(
     return llm.call_json(prompt, max_tokens=max_tokens, node_name="parse")
 
 
+def _merge_partial_results(partial_results: list[dict]) -> dict:
+    """程序合并多个分段理解结果（无 LLM 调用）。"""
+    if not partial_results:
+        return {}
+
+    # 取第一个作为基础
+    merged = partial_results[0].copy()
+
+    # 合并 extraction_hints（程序去重）
+    all_hints = []
+    seen_hints = set()
+    for result in partial_results:
+        for hint in result.get("extraction_hints", []):
+            # 基于 field + value + variety + treatment 去重
+            key = (
+                hint.get("field", ""),
+                str(hint.get("value", ""))[:200],
+                hint.get("variety", ""),
+                hint.get("treatment", ""),
+            )
+            if key not in seen_hints:
+                seen_hints.add(key)
+                all_hints.append(hint)
+    merged["extraction_hints"] = all_hints
+
+    # 合并 crops（去重）
+    all_crops = set()
+    for result in partial_results:
+        for crop in result.get("doc_context", {}).get("crops", []):
+            all_crops.add(crop)
+    if "doc_context" not in merged:
+        merged["doc_context"] = {}
+    merged["doc_context"]["crops"] = sorted(all_crops)
+
+    # 合并 study_list（取最完整的版本）
+    best_study_list = []
+    best_study_count = 0
+    for result in partial_results:
+        study_list = result.get("doc_context", {}).get("study_list", [])
+        if len(study_list) > best_study_count:
+            best_study_count = len(study_list)
+            best_study_list = study_list
+    merged["doc_context"]["study_list"] = best_study_list
+
+    # 合并 document_tree（取最完整的版本）
+    best_tree = []
+    best_tree_depth = 0
+    for result in partial_results:
+        tree = result.get("doc_context", {}).get("document_tree", [])
+        depth = _tree_depth(tree)
+        if depth > best_tree_depth:
+            best_tree_depth = depth
+            best_tree = tree
+    merged["doc_context"]["document_tree"] = best_tree
+
+    # 合并 table_refs（基于 table_id 去重）
+    all_table_refs = {}
+    for result in partial_results:
+        for ref in result.get("doc_context", {}).get("table_refs", []):
+            table_id = ref.get("table_id", "")
+            if table_id and table_id not in all_table_refs:
+                all_table_refs[table_id] = ref
+    merged["doc_context"]["table_refs"] = list(all_table_refs.values())
+
+    # 合并 variety_groups（按 group_name 去重）
+    all_variety_groups = {}
+    for result in partial_results:
+        for group in result.get("doc_context", {}).get("variety_groups", []):
+            group_name = group.get("group_name", "")
+            if group_name and group_name not in all_variety_groups:
+                all_variety_groups[group_name] = group
+    merged["doc_context"]["variety_groups"] = list(all_variety_groups.values())
+
+    # 保留 data_file_link 和 data_file_description（任一分段有就保留）
+    for result in partial_results:
+        if result.get("doc_context", {}).get("data_file_link"):
+            merged["doc_context"]["data_file_link"] = result["doc_context"]["data_file_link"]
+        if result.get("doc_context", {}).get("data_file_description"):
+            merged["doc_context"]["data_file_description"] = result["doc_context"]["data_file_description"]
+
+    return merged
+
+
+def _tree_depth(tree: list) -> int:
+    """计算文档树的最大深度。"""
+    if not tree:
+        return 0
+    max_depth = 0
+    for node in tree:
+        depth = node.get("level", 0)
+        children = node.get("children", [])
+        if children:
+            depth = max(depth, _tree_depth(children))
+        max_depth = max(max_depth, depth)
+    return max_depth
+
+
 def _understand_document_chunked(
     md_text: str,
     tree_outline: str,
@@ -63,10 +160,7 @@ def _understand_document_chunked(
     config: AppConfig,
     max_tokens_override: int = 0,
 ) -> Optional[dict]:
-    """分段理解 + 合并（适用于长论文 + 有章节标题）。
-
-    按文档树顶层章节切分，每个顶层 section 为一个 chunk。
-    """
+    """分段理解 + 程序合并（适用于长论文 + 有章节标题）。"""
     prompt_template = (PROMPT_DIR / "parse_understanding.txt").read_text(encoding="utf-8")
     max_tokens = max_tokens_override if max_tokens_override > 0 else config.llm.max_tokens
 
@@ -90,13 +184,8 @@ def _understand_document_chunked(
     if not partial_results:
         return None
 
-    # 合并所有分段理解
-    merge_template = (PROMPT_DIR / "parse_merge.txt").read_text(encoding="utf-8")
-    merge_prompt = merge_template.format(
-        partial_results=partial_results,
-        tree_outline=tree_outline,
-    )
-    return llm.call_json(merge_prompt, max_tokens=max_tokens, node_name="parse")
+    # 程序合并（无 LLM 调用）
+    return _merge_partial_results(partial_results)
 
 
 def _understand_document_sliding_window(
@@ -108,7 +197,7 @@ def _understand_document_sliding_window(
     config: AppConfig,
     max_tokens_override: int = 0,
 ) -> Optional[dict]:
-    """滑动窗口 + 合并（适用于长论文 + 无章节标题）。"""
+    """滑动窗口 + 程序合并（适用于长论文 + 无章节标题）。"""
     prompt_template = (PROMPT_DIR / "parse_understanding.txt").read_text(encoding="utf-8")
     max_tokens = max_tokens_override if max_tokens_override > 0 else config.llm.max_tokens
 
@@ -131,13 +220,8 @@ def _understand_document_sliding_window(
     if not partial_results:
         return None
 
-    # 合并
-    merge_template = (PROMPT_DIR / "parse_merge.txt").read_text(encoding="utf-8")
-    merge_prompt = merge_template.format(
-        partial_results=partial_results,
-        tree_outline=tree_outline,
-    )
-    return llm.call_json(merge_prompt, max_tokens=max_tokens, node_name="parse")
+    # 程序合并（无 LLM 调用）
+    return _merge_partial_results(partial_results)
 
 
 def _split_into_chunks(text: str, max_length: int = 50000) -> list[str]:
