@@ -81,6 +81,10 @@ def _run_pipeline(job_id: str, request: RunRequest, config_override: dict = None
         config = load_config()
         config.set_run_id()
 
+        # ── 初始化日志（确保后台线程的日志写入 output/runs/{run_id}/logs/extractor.log）──
+        from run import setup_logging
+        setup_logging(config)
+
         # 应用 API 请求中的覆盖参数
         if request.keywords:
             config.extraction.search_keywords = request.keywords

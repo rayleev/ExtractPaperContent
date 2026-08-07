@@ -18,7 +18,6 @@ from src.config import AppConfig
 from src.clients.llm import LLMClient
 from src.core.chunker import (
     build_document_tree,
-    collect_content,
     find_experiment_sections,
 )
 from src.graph.state import PaperState
@@ -190,24 +189,6 @@ def extract_phase2_node(
 
         return "\n\n---\n\n".join(parts)
 
-    def _find_best_section_for_study(study_index: int, study_title: str) -> str:
-        """
-        为指定 study 找到最匹配的实验章节内容。
-        优先按 study_index 对应，否则按标题匹配。
-        """
-        # 优先按索引对应
-        if study_index < len(actual_exp_sections):
-            content = collect_content(actual_exp_sections[study_index])
-            return content
-        # 回退：按标题匹配
-        for sec in actual_exp_sections:
-            if study_title and study_title in sec.title:
-                return collect_content(sec)
-        # 最后回退：返回第一个 section 或全文
-        if actual_exp_sections:
-            return collect_content(actual_exp_sections[0])
-        return md_text[:config.extraction.max_text_chars]
-
     if use_phase1_studies:
         # ── 以 Phase 1 studies 为准 ──
         logger.info(f"  [{pid[:25]}] Phase 2: processing {len(studies)} study/studies from Phase 1")
@@ -231,15 +212,22 @@ def extract_phase2_node(
                     f"({len(relevant_content)} chars)"
                 )
             else:
-                # hints 覆盖不足，回退到完整章节内容
-                section_content = _find_best_section_for_study(i, s.get("study_title", ""))
-                max_content = config.extraction.max_text_chars
-                if len(section_content) > max_content:
-                    section_content = section_content[:max_content] + "\n\n[...TRUNCATED...]"
-                logger.info(
-                    f"  [{pid[:25]}] Study {i+1}: hints insufficient ({len(relevant_content)} chars), "
-                    f"using section content ({len(section_content)} chars)"
+                # hints 覆盖不足，跳过该 study（parse 未识别到有效信息）
+                logger.warning(
+                    f"  [{pid[:25]}] Study {i+1}: hints insufficient ({len(relevant_content)} chars), skipping"
                 )
+                phase2_results.append({
+                    "study_index": i,
+                    "varieties": [],
+                })
+                if "extraction_errors" not in state:
+                    state["extraction_errors"] = []
+                state["extraction_errors"].append({
+                    "study_index": i,
+                    "study_title": study_title[:60],
+                    "error": "hints_insufficient",
+                })
+                continue
 
             prompt = prompt_template.format(
                 paper_id=pid,
@@ -298,11 +286,22 @@ def extract_phase2_node(
             if len(relevant_content) >= 2000:
                 section_content = relevant_content
             else:
-                # hints 覆盖不足，回退到文档树章节内容
-                section_content = collect_content(exp_node)
-                max_content = config.extraction.max_text_chars
-                if len(section_content) > max_content:
-                    section_content = section_content[:max_content] + "\n\n[...TRUNCATED...]"
+                # hints 覆盖不足，跳过该 study
+                logger.warning(
+                    f"  [{pid[:25]}] Study {i+1}: hints insufficient ({len(relevant_content)} chars), skipping"
+                )
+                phase2_results.append({
+                    "study_index": i,
+                    "varieties": [],
+                })
+                if "extraction_errors" not in state:
+                    state["extraction_errors"] = []
+                state["extraction_errors"].append({
+                    "study_index": i,
+                    "study_title": study_title[:60],
+                    "error": "hints_insufficient",
+                })
+                continue
 
             prompt = prompt_template.format(
                 paper_id=pid,

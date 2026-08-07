@@ -65,12 +65,15 @@ def _understand_document_chunked(
     config: AppConfig,
     max_tokens_override: int = 0,
 ) -> Optional[dict]:
-    """分段理解 + 合并（适用于长论文 + 有章节标题）。"""
+    """分段理解 + 合并（适用于长论文 + 有章节标题）。
+
+    按文档树顶层章节切分，每个顶层 section 为一个 chunk。
+    """
     prompt_template = (PROMPT_DIR / "parse_understanding.txt").read_text(encoding="utf-8")
     max_tokens = max_tokens_override if max_tokens_override > 0 else config.llm.max_tokens
 
-    # 分段：按章节切分（简化实现：按长度切分，每段约 8000 字符）
-    chunks = _split_into_chunks(md_text, max_length=8000)
+    # 按文档树顶层章节切分
+    chunks = _split_by_top_level_sections(md_text)
 
     partial_results = []
     for i, chunk in enumerate(chunks):
@@ -163,6 +166,39 @@ def _sliding_window(text: str, window_size: int, step: int) -> list[tuple[str, i
     return chunks
 
 
+def _split_by_top_level_sections(md_text: str) -> list[str]:
+    """按文档树顶层章节切分文本。
+
+    每个顶层 section（level=1 的子节点）及其所有子孙内容为一个 chunk。
+    如果文档树构建失败或只有一个节点，回退到按 50k chars 切分。
+    """
+    from src.core.chunker import build_document_tree, collect_content
+
+    try:
+        tree = build_document_tree(md_text)
+        children = tree.children
+
+        # 过滤掉 level=0 的 root 节点
+        top_level = [c for c in children if c.level == 1]
+
+        if len(top_level) <= 1:
+            # 只有一个顶层章节，回退到按 50k chars 切分
+            return _split_into_chunks(md_text, max_length=50000)
+
+        # 每个顶层 section 收集完整内容
+        chunks = []
+        for sec in top_level:
+            content = collect_content(sec)
+            if content.strip():
+                chunks.append(content)
+
+        return chunks if chunks else _split_into_chunks(md_text, max_length=50000)
+
+    except Exception as e:
+        logger.warning(f"Failed to build document tree for section splitting: {e}")
+        return _split_into_chunks(md_text, max_length=50000)
+
+
 def _understand_document(
     md_text: str,
     tree_outline: str,
@@ -185,7 +221,7 @@ def _understand_document(
 
     if estimated_tokens < threshold_tokens:
         # 短论文：一次性给全文
-        logger.info(f"    Using full-text strategy (est. {estimated_tokens:.0f} tokens)")
+        logger.info(f"    Using full-text strategy (est. {estimated_tokens:.0f} tokens, context_window={config.context_window}, threshold={threshold_tokens:.0f})")
         return _understand_document_full_text(
             md_text, tree_outline, abstract_text, methods_text, llm, config,
             max_tokens_override=max_tokens_override,

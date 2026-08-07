@@ -39,13 +39,40 @@ from src.clients.llm import LLMClient
 
 
 def setup_logging(config):
-    """配置日志（CLI 模式）。"""
+    """配置日志（CLI 模式，幂等）。
+
+    如果 paper_extractor logger 已有 handler（如 API 模式先调用了 _setup_api_logging），
+    则仅补充 file handler，避免重复添加 stdout handler 导致日志双输出。
+    """
     import os
+    _logger = logging.getLogger("paper_extractor")
+    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+
+    if _logger.handlers:
+        # 已有 handler（API 模式），仅补充 file handler
+        log_dir = config.log_path
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / "extractor.log"
+        if not any(
+            isinstance(h, logging.FileHandler) and Path(getattr(h, "baseFilename", "")).resolve() == log_file.resolve()
+            for h in _logger.handlers
+        ):
+            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+            file_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+            )
+            _logger.addHandler(file_handler)
+        _logger.setLevel(level)
+        return _logger
+
+    # CLI 模式：首次配置
     log_dir = config.log_path
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "extractor.log"
-    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
-    level = getattr(logging, level_name, logging.INFO)
     logging.basicConfig(
         level=level,
         format="%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s",
@@ -55,7 +82,7 @@ def setup_logging(config):
             logging.StreamHandler(sys.stdout),
         ],
     )
-    return logging.getLogger("paper_extractor")
+    return _logger
 
 
 def main():

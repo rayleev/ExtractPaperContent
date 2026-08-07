@@ -132,6 +132,11 @@ def evidence_node(
             field_values.append(field_info)
             candidates.append(candidate or {"location": "unknown", "text": ""})
 
+    logger.info(f"  [{pid[:25]}] Evidence: {len(field_values)} fields to verify, {len(extraction.get('studies', []))} studies")
+
+    if len(field_values) > 50:
+        logger.warning(f"  [{pid[:25]}] Evidence: large batch ({len(field_values)} fields), may hit max_tokens limit")
+
     # 批量 LLM 验证
     prompt_template = (PROMPT_DIR / "evidence.txt").read_text(encoding="utf-8")
 
@@ -146,6 +151,7 @@ def evidence_node(
         parsed_text=parsed_text[:8000],  # 截断以节省 token
     )
 
+    logger.info(f"  [{pid[:25]}] Evidence: prompt {len(prompt)} chars, max_tokens={config.llm.evidence_max_tokens}")
     result = llm.call_json(prompt, max_tokens=config.llm.evidence_max_tokens, node_name="evidence")
     if not result:
         logger.warning(f"  [{pid[:25]}] Evidence FAILED: LLM returned no result (timeout/error)")
@@ -164,7 +170,9 @@ def evidence_node(
 
     evidence_nodes = result.get("evidence_nodes", [])
 
-    logger.info(f"  [{pid[:25]}] Evidence: {len(evidence_nodes)} fields verified")
+    logger.info(f"  [{pid[:25]}] Evidence: {len(evidence_nodes)} fields verified for {len(field_values)} fields requested")
+    if len(evidence_nodes) < len(field_values):
+        logger.warning(f"  [{pid[:25]}] Evidence: incomplete response ({len(evidence_nodes)}/{len(field_values)} fields)")
 
     return {
         "evidence_nodes": evidence_nodes,
