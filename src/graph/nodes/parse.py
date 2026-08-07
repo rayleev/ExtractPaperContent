@@ -13,6 +13,7 @@ LLM 理解策略（根据论文长度自动选择）：
 
 from __future__ import annotations
 import logging
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
