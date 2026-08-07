@@ -98,4 +98,5 @@ def geocode_node(state: PaperState, config: AppConfig, geocoder: Geocoder) -> di
         "extraction": extraction,
         "geocoded": True,
         "status": "geocoded",
+        "node_status": {"geocode": "geocoded"},
     }

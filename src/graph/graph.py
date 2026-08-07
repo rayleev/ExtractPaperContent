@@ -62,6 +62,11 @@ def _timed(node_name: str, func):
             logger.info(f"  [{pid}] {node_name} END ({elapsed:.1f}s)")
         else:
             logger.debug(f"  [{pid}] {node_name} END ({elapsed:.2f}s)")
+        # 合并 node_status（不覆盖已有状态）
+        if "node_status" in result:
+            existing = state.get("node_status", {})
+            existing.update(result["node_status"])
+            result["node_status"] = existing
         return result
     return wrapper
 

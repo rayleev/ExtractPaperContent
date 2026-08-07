@@ -1,28 +1,14 @@
-你是一个专业的农业科研文献数据提取专家。请从以下论文中提取论文级元数据和试验信息。
+你是一个专业的农业科研文献数据提取专家。请从以下论文信息中提取**单个试验**的元数据。
 
 ## 任务说明
 
-这是**第一阶段提取**，目标是：
-1. 提取论文级元数据（Paper级别字段）
-2. 提取试验级信息（Study级别字段），包括试验设计、地点、栽培措施等
+这是**第一阶段提取**，针对**单个 study**提取试验级元数据：
+- 试验年份、地点、试验站
+- 小区面积、种植密度、重复次数
+- 试验设计类型、生长环境
+- 栽培管理措施
 
-## 提取规则（请严格遵守）
-
-1. **只提取论文中明确存在的数据**，绝不编造或推测
-2. **缺失字段填 null**，不要猜测
-3. 每个试验 = 一个年份 × 一个试验站
-   - 不同年份 = 不同试验
-   - 不同试验站 = 不同试验
-   - 同一试验站内的多个地块/区组 = 同一个试验
-4. crop_species 从论文标题、摘要或方法部分识别
-
-## 数据质量规则（必须遵守）
-
-1. **对照品种**：每个试验必须有一个对照品种（is_check_variety=true）
-2. **试验年份**：trial_year 不能晚于论文发表年份（publication_year）
-3. **品种名称**：必须是具体名称（如"辽梗375"），不能是代号（如"WYJ23"）或模糊描述（如"27份材料"）
-4. **产量范围**：水稻产量通常在 500-18000 kg/ha 之间
-5. **增产率**：pct_over_check 应该与对照品种计算一致（偏差 <1%）
+**品种级字段（variety_name、yield、treatment_name、NPK 施用量等）在 Phase 2 提取**，本阶段不提取。
 
 ## 论文元数据
 
@@ -31,100 +17,117 @@
 **标题**: {title}
 **发表年份**: {year}
 **期刊**: {journal}
+**作物**: {crops_text}
 
-## 文档结构大纲
+## 当前试验信息（来自 parse 节点）
 
-{outline}
+**试验标题**: {study_title}
+**试验因子**: {factors_desc}
+**供试品种**:
+{varieties_text}
 
-## 摘要
+## 相关内容（来自 parse 节点的 hints）
 
-{abstract}
+{relevant_content}
 
-## 试验设计与方法
+## 提取提示
 
-{methods}
+{extraction_hints}
 
-{auxiliary_context}
+{supplementary_info}
 
 ## 输出JSON格式
 
 严格输出以下JSON格式，不要包含任何其他文字：
+
 ```json
 {{
-  "paper": {{
-    "crop_species": "[REQUIRED] 作物物种，如 '水稻 / Rice'（parse 已识别时可复用）",
-    "data_file_link": "数据文件链接（可选，parse 已识别时可复用）",
-    "data_file_description": "数据文件格式说明（可选）",
-    "data_file_version": "版本号（可选）"
-  }},
-  "studies": [
-    {{
-      "study_title": "[REQUIRED] 试验名称/标题",
-      "study_description": "试验简述（1-2句话概括）",
-      "trial_year": "[REQUIRED] 试验年份，如 '2022' 或 '2022-2023'",
-      "sowing_date": "播种日期（如 2022-04-15）",
-      "harvest_date": "收获日期（如 2022-10-08）",
-      "country": "[REQUIRED] 国家代码，如 CN",
-      "site_administrative_region": "[REQUIRED] 行政区划，如 '辽宁省沈阳市'",
-      "experimental_site_name": "试验站/试验地点名称",
-      "latitude": "纬度（仅当论文明确写出时）",
-      "longitude": "经度（仅当论文明确写出时）",
-      "altitude": "海拔（仅当论文明确写出时）",
-      "replication_number": "重复次数（整数）",
-      "plot_size": "小区面积，如 '13.3 m²'",
-      "planting_density": "种植密度，如 '22.5万穴/公顷'",
-      "experimental_design_description": "[REQUIRED] 试验设计描述",
-      "experimental_design_type": "<RCBD|Split-plot|CRD|Unknown>",
-      "growth_facility_description": "试验环境，如 '大田环境'、'温室'",
-      "cultural_practices": "栽培管理措施描述"
-    }}
-  ]
+  "study_title": "[REQUIRED] 试验名称/标题",
+  "study_description": "试验简述（1-2句话概括）",
+  "trial_year": "[REQUIRED] 试验年份，如 '2022' 或 '2022-2023'",
+  "sowing_date": "播种日期（如 2022-04-15）",
+  "harvest_date": "收获日期（如 2022-10-08）",
+  "country": "[REQUIRED] 国家代码，如 CN",
+  "site_administrative_region": "[REQUIRED] 行政区划，如 '辽宁省沈阳市'",
+  "experimental_site_name": "试验站/试验地点名称",
+  "latitude": "纬度（仅当论文明确写出时）",
+  "longitude": "经度（仅当论文明确写出时）",
+  "altitude": "海拔（仅当论文明确写出时）",
+  "replication_number": "重复次数（整数）",
+  "plot_size": "小区面积，如 '13.3 m²'",
+  "planting_density": "种植密度，如 '22.5万穴/公顷'",
+  "experimental_design_description": "[REQUIRED] 试验设计描述",
+  "experimental_design_type": "<RCBD|Split-plot|CRD|Unknown>",
+  "growth_facility_description": "试验环境，如 '大田环境'、'温室'",
+  "cultural_practices": "栽培管理措施描述"
 }}
 ```
 
-**注意**：
-- studies 数组包含论文中**所有试验**
-- 如果论文只有一个试验，只列一个元素
-- 如果论文有多个试验（不同年份或不同地点），每个列一个元素
-- 如果 parse 已识别作物或数据文件链接，可直接复用，但仍需验证
-- latitude/longitude/altitude 仅在论文明确写出时提取，否则填 null
-- **品种级字段（variety_name、yield、treatment_name、NPK 施用量等）在 Phase 2 提取**，本阶段不提取
-- 若论文涉及施肥/肥料试验，请在 `cultural_practices` 或 `experimental_design_description` 中**原文保留**施肥量描述（如"设 N0/N180/N240 三个施氮水平，纯氮量分别为 0、180、240 kg/ha"），Phase 2 会据此提取 NPK 字段
+## 提取规则（请严格遵守）
 
----
+1. **只提取论文中明确存在的数据**，绝不编造或推测
+2. **缺失字段填 null**，不要猜测
+3. **trial_year** 不能晚于论文发表年份（{year}）
+4. **site_administrative_region** 必须具体到市/县级别
+5. **plot_size** 必须是具体数值（如 "13.3 m²"），不能是模糊描述
+6. **growth_facility_description** 优先识别：大田/温室/盆栽/人工气候室
+7. 若论文涉及施肥/肥料试验，请在 `cultural_practices` 或 `experimental_design_description` 中**原文保留**施肥量描述
+
+## 使用 hints 的方法
+
+- hints 中的 `context` 字段包含原文片段，可从中提取年份/地点/面积
+- hints 中的 `source_table` 指示数据来源表格，可参考定位
+- 如果 hints 中没有明确信息，填 null
 
 ## 正确示例
 
-### 示例 1：正确提取
+### 示例 1：从 hints 提取
 
-论文方法部分："试验于 2022 年在辽宁省沈阳市沈阳农业大学试验站进行，供试品种为辽梗375（CK）、郑单978"
+hints 上下文："试验于 2022 年在辽宁省沈阳市沈阳农业大学试验站进行，小区面积 13.3 m²，3 次重复"
 
 输出：
 ```json
 {{
-  "paper": {{
-    "crop_species": "水稻 / Rice"
-  }},
-  "studies": [
-    {{
-      "study_title": "水稻品种比较试验",
-      "trial_year": "2022",
-      "site_administrative_region": "辽宁省沈阳市",
-      "experimental_site_name": "沈阳农业大学试验站"
-    }}
-  ]
+  "study_title": "水稻品种比较试验",
+  "trial_year": "2022",
+  "site_administrative_region": "辽宁省沈阳市",
+  "experimental_site_name": "沈阳农业大学试验站",
+  "replication_number": 3,
+  "plot_size": "13.3 m²",
+  "experimental_design_type": "RCBD",
+  "growth_facility_description": "大田环境"
 }}
 ```
 
----
+### 示例 2：信息不足
+
+hints 上下文："本研究比较了水稻品种辽梗375、郑单978 的产量表现"
+
+输出：
+```json
+{{
+  "study_title": "水稻品种比较试验",
+  "trial_year": null,
+  "site_administrative_region": null,
+  "experimental_site_name": null,
+  "replication_number": null,
+  "plot_size": null,
+  "experimental_design_type": null,
+  "growth_facility_description": null
+}}
+```
 
 ## 常见错误示例
 
 ❌ 错误：trial_year="2025"，但 publication_year=2023
 ✅ 正确：trial_year 不能晚于 publication_year
 
-❌ 错误：studies 中没有对照品种
-✅ 正确：每个试验必须有一个 is_check_variety=true 的品种（在 phase2 中提取）
-
 ❌ 错误：site_administrative_region="中国"（太模糊）
 ✅ 正确：site_administrative_region="辽宁省沈阳市"（具体到市）
+
+❌ 错误：plot_size="适中"（模糊描述）
+✅ 正确：plot_size="13.3 m²"（具体数值）
+
+---
+
+请输出 JSON：

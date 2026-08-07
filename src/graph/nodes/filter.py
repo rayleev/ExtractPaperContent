@@ -40,6 +40,7 @@ def filter_node(state: PaperState, config: AppConfig) -> dict:
         return {
             "is_extractable": False,
             "status": "skipped",
+            "node_status": {"filter": "skipped"},
             "errors": [{"node": "filter", "error": reason}],
         }
 
@@ -67,12 +68,13 @@ def filter_node(state: PaperState, config: AppConfig) -> dict:
             return {
                 "is_extractable": False,
                 "status": "skipped",
+                "node_status": {"filter": "skipped"},
                 "errors": [{"node": "filter", "error": reason}],
             }
 
     if is_china(country):
         logger.info(f"  [{pid[:25]}] Filter PASS: category={category}, country={country}")
-        return {"is_extractable": True, "status": "filtered"}
+        return {"is_extractable": True, "status": "filtered", "node_status": {"filter": "filtered"}}
 
     if is_uncertain(country):
         # 不确定 → 放行，提取后基于全文 study.country 复核
@@ -80,7 +82,7 @@ def filter_node(state: PaperState, config: AppConfig) -> dict:
             f"  [{pid[:25]}] Filter PASS (country '{country or 'empty'}' uncertain, "
             f"will verify after extraction): category={category}"
         )
-        return {"is_extractable": True, "status": "filtered"}
+        return {"is_extractable": True, "status": "filtered", "node_status": {"filter": "filtered"}}
 
     # 明确非中国 → skip
     reason = f"country '{country}' not China"
@@ -88,5 +90,6 @@ def filter_node(state: PaperState, config: AppConfig) -> dict:
     return {
         "is_extractable": False,
         "status": "skipped",
+        "node_status": {"filter": "skipped"},
         "errors": [{"node": "filter", "error": reason}],
     }

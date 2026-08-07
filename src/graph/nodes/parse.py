@@ -35,8 +35,6 @@ PROMPT_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"
 def _understand_document_full_text(
     md_text: str,
     tree_outline: str,
-    abstract_text: str,
-    methods_text: str,
     llm: LLMClient,
     config: AppConfig,
     max_tokens_override: int = 0,
@@ -47,8 +45,8 @@ def _understand_document_full_text(
     prompt = prompt_template.format(
         md_text=md_text,
         tree_outline=tree_outline,
-        abstract_text=abstract_text,
-        methods_text=methods_text,
+        abstract_text="",
+        methods_text="",
         strategy="full_text",
         chunk_info="",
     )
@@ -80,8 +78,8 @@ def _understand_document_chunked(
         prompt = prompt_template.format(
             md_text=chunk,
             tree_outline=tree_outline,
-            abstract_text=abstract_text,
-            methods_text=methods_text,
+            abstract_text="",
+            methods_text="",
             strategy="chunked",
             chunk_info=f"第 {i+1}/{len(chunks)} 段",
         )
@@ -121,8 +119,8 @@ def _understand_document_sliding_window(
         prompt = prompt_template.format(
             md_text=chunk,
             tree_outline=tree_outline,
-            abstract_text=abstract_text,
-            methods_text=methods_text,
+            abstract_text="",
+            methods_text="",
             strategy="sliding_window",
             chunk_info=f"窗口 {i+1}（起始位置 {start_pos}）",
         )
@@ -223,7 +221,7 @@ def _understand_document(
         # 短论文：一次性给全文
         logger.info(f"    Using full-text strategy (est. {estimated_tokens:.0f} tokens, context_window={config.context_window}, threshold={threshold_tokens:.0f})")
         return _understand_document_full_text(
-            md_text, tree_outline, abstract_text, methods_text, llm, config,
+            md_text, tree_outline, llm, config,
             max_tokens_override=max_tokens_override,
         )
 
@@ -253,7 +251,7 @@ def _understand_document(
 
     # 兜底：一次性给全文（可能超上下文，但总比失败好）
     return _understand_document_full_text(
-        md_text, tree_outline, abstract_text, methods_text, llm, config,
+        md_text, tree_outline, llm, config,
         max_tokens_override=max_tokens_override,
     )
 
@@ -454,6 +452,7 @@ def parse_node(
             "needs_lookup": False,
             "parse_quality": parse_quality,
             "status": "failed",
+            "node_status": {"parse": "failed"},
             "errors": [{"node": "parse", "error": "LLM understanding failed or quality too weak"}],
         }
 
@@ -467,4 +466,5 @@ def parse_node(
         "needs_lookup": needs_lookup,
         "parse_quality": parse_quality,
         "status": "parsed",
+        "node_status": {"parse": "parsed"},
     }

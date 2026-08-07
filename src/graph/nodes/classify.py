@@ -83,6 +83,7 @@ def classify_node(state: PaperState, config: AppConfig, llm: LLMClient) -> dict:
         return {
             "classification": {"paper_id": pid, "category": "unknown"},
             "status": "failed",
+            "node_status": {"classify": "failed"},
             "errors": [{
                 "node": "classify",
                 "error": "LLM 调用失败：分类节点未返回结果（可能是 API 限流/超时/JSON 解析失败），请检查 LLM 服务状态后重试",
@@ -105,4 +106,5 @@ def classify_node(state: PaperState, config: AppConfig, llm: LLMClient) -> dict:
     return {
         "classification": classification,
         "status": "classified",
+        "node_status": {"classify": "classified"},
     }

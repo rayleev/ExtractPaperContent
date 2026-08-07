@@ -414,9 +414,14 @@ class BatchOrchestrator:
                 if target_step == "extract":
                     insert_extraction(conn, result, pid)
 
+                # 获取 node_status 和 last_node
+                node_status = result.get("node_status", {})
+                last_node = list(node_status.keys())[-1] if node_status else ""
+
                 update_paper_status(
                     conn, pid, title, target_step,
                     "completed", duration, run_id=self.config.run_id,
+                    last_node=last_node, node_status=node_status,
                 )
                 # 已成功处理（含 MD 兜底），从 pdf_missing 移除，该表只留当前卡住的
                 delete_pdf_missing(conn, pid)
@@ -436,10 +441,15 @@ class BatchOrchestrator:
                     skip_reason += f" | 验证超时: {len(validation_errors)}个节点"
                 skip_reason = skip_reason[:500]
                 
+                # 获取 node_status 和 last_node
+                node_status = result.get("node_status", {})
+                last_node = list(node_status.keys())[-1] if node_status else ""
+                
                 update_paper_status(
                     conn, pid, title, target_step,
                     "skipped", duration, error_message=skip_reason,
                     run_id=self.config.run_id,
+                    last_node=last_node, node_status=node_status,
                 )
                 # 已被剔除（如非中国论文），视为已解决，从 pdf_missing 移除
                 delete_pdf_missing(conn, pid)
@@ -457,9 +467,14 @@ class BatchOrchestrator:
                     error_msg += f" | 验证超时: {len(validation_errors)}个节点"
                 error_msg = error_msg[:500]
                 
+                # 获取 node_status 和 last_node
+                node_status = result.get("node_status", {})
+                last_node = list(node_status.keys())[-1] if node_status else ""
+                
                 update_paper_status(
                     conn, pid, title, target_step,
                     "failed", duration, error_msg, self.config.run_id,
+                    last_node=last_node, node_status=node_status,
                 )
         except Exception:
             # 回滚当前论文的未提交操作，保持连接可用供后续论文复用

@@ -1,12 +1,13 @@
 """
-Phase 1 提取节点 — 论文级 + 试验级提取。
+Phase 1 提取节点 — 基于 parse 输出的 study_list 遍历提取 study 级元数据。
 
-输入：parse 输出（doc_context + extraction_hints）+ 摘要 + 标题大纲 + 方法部分
-输出：paper 元数据 + studies 列表（试验级信息）
+输入：parse 输出（doc_context + extraction_hints + document_tree + variety_groups）
+输出：paper 元数据 + studies 列表（试验级信息：年份/地点/面积等）
 
 策略：
-  - parse 成功时，复用 doc_context（作物、study 数等），extraction_hints 辅助定位
-  - parse 失败时，回退到原逻辑，自己理解全部
+  - 遍历 parse 的 study_list，对每个 study 提取元数据
+  - 使用 hints + document_tree 定位原文
+  - 不依赖 abstract_text / methods_text
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from pathlib import Path
 from src.config import AppConfig
 from src.clients.llm import LLMClient
 from src.graph.state import PaperState
+from src.graph.nodes._common import build_relevant_content_from_hints
 
 logger = logging.getLogger("paper_extractor")
 
@@ -34,26 +36,18 @@ def extract_phase1_node(
     llm: LLMClient,
 ) -> dict:
     """
-    Phase 1 提取：论文级 + 试验级信息。
-
-    提取论文元数据（crop_species 等）和试验级信息（study 列表）。
-
-    策略：
-      - parse 成功时，复用 doc_context，利用 extraction_hints 辅助定位
-      - parse 失败时，回退到原逻辑，自己理解全部
+    Phase 1 提取：基于 parse 的 study_list 遍历提取 study 级元数据。
     """
     pid = state["paper_id"]
     paper_meta = state["paper_meta"]
     prompt_template = _load_prompt("extract_paper.txt")
 
-    outline = state.get("tree_outline", "")
-    abstract = state.get("abstract_text", "")[:5000]
-    methods = state.get("methods_text", "")[:15000]
-
-    # parse 输出（辅助上下文）
+    # parse 输出
     doc_context = state.get("doc_context", {})
     extraction_hints = state.get("extraction_hints", [])
-    parse_success = bool(doc_context)
+    document_tree = doc_context.get("document_tree", [])
+    variety_groups = doc_context.get("variety_groups", [])
+    study_list = doc_context.get("study_list", [])
 
     # 获取作物列表
     crops = doc_context.get("crops", [])
@@ -61,117 +55,125 @@ def extract_phase1_node(
     if not crops and classification:
         crops = classification.get("crops", [])
 
-    # 构建辅助上下文文本
-    if parse_success:
-        hints_text = "\n".join(
-            f"- [{h.get('action', '?')}] {h.get('field', '')}: {h.get('value', '')}"
-            for h in extraction_hints
-        ) or "(无提取提示)"
+    crops_text = ", ".join(crops) if crops else doc_context.get('crop', '')
 
-        crops_text = ", ".join(crops) if crops else doc_context.get('crop', '')
-
-        # 格式化 study_list 用于显示
-        study_list = doc_context.get("study_list", [])
-        if isinstance(study_list, list) and study_list:
-            studies_display = "\n".join(
-                f"  - {s.get('study_id', '?')}: {s.get('study_title', '')}"
-                for s in study_list
-            )
-            studies_text = f"{len(study_list)} 个试验:\n{studies_display}"
-        else:
-            studies_text = str(doc_context.get("study_count", "未知"))
-
-        # 格式化 table_refs（现在是 dict 列表）
-        table_refs = doc_context.get("table_refs", [])
-        if table_refs:
-            table_refs_text = "\n".join(
-                f"  - {t.get('table_id', '')} ({t.get('section', '')}, {t.get('data_type', '')})"
-                for t in table_refs
-            )
-        else:
-            table_refs_text = "无"
-
-        auxiliary_context = f"""
-
----
-
-## 辅助上下文（parse 节点输出）
-
-以下信息已由 parse 节点识别，请**复用**并**验证**：
-
-**作物**: {crops_text}
-**试验列表**: {studies_text}
-**补充材料**: {'是' if doc_context.get('has_supplementary') else '否'}
-**表格引用**:
-{table_refs_text}
-**数据文件链接**: {doc_context.get('data_file_link', '无')}
-
-## 提取提示（extraction_hints）
-
-以下提示可帮助你**定位**相关内容：
-
-{hints_text}
-
-**使用方式**：
-- `ok` → 信息完整，可直接复用
-- `needs_lookup` → 需要去材料方法/补充表/表格查找完整信息
-- `verify` → 信息不足或模糊，需核实
-
----
-
-## 多作物处理
-
-如果论文研究多种作物（如水稻和玉米），请按作物拆分 study：
-- 每个 study 只包含一种作物的试验
-- study_title 应包含作物名称（如"水稻品种比较试验"、"玉米品种比较试验"）
-- 从 extraction_hints 中筛选该作物相关的提示
-
-"""
+    # 格式化 table_refs（现在是 dict 列表）
+    table_refs = doc_context.get("table_refs", [])
+    if table_refs:
+        table_refs_text = "\n".join(
+            f"  - {t.get('table_id', '')} ({t.get('section', '')}, {t.get('data_type', '')})"
+            for t in table_refs
+        )
     else:
-        auxiliary_context = """
----
+        table_refs_text = "无"
 
-## 辅助上下文
+    # 补充材料信息
+    has_supplementary = doc_context.get("has_supplementary", False)
+    data_file_link = doc_context.get("data_file_link")
 
-parse 节点未成功，请自行理解论文内容。
+    supplementary_info = ""
+    if has_supplementary:
+        supplementary_info = f"\n**补充材料**: 是（表格引用:\n{table_refs_text}）"
+    elif table_refs:
+        supplementary_info = f"\n**表格引用**:\n{table_refs_text}"
 
-"""
+    if data_file_link:
+        supplementary_info += f"\n**数据文件链接**: {data_file_link}"
 
-    prompt = prompt_template.format(
-        paper_id=pid,
-        doi=paper_meta.get("doi", ""),
-        title=paper_meta.get("title", ""),
-        year=paper_meta.get("year", ""),
-        journal=paper_meta.get("journal", ""),
-        outline=outline,
-        abstract=abstract,
-        methods=methods,
-        auxiliary_context=auxiliary_context,
+    # 构建 hints 内容
+    hints_text = "\n".join(
+        f"- [{h.get('action', '?')}] {h.get('field', '')}: {h.get('value', '')}"
+        for h in extraction_hints
+    ) or "(无提取提示)"
+
+    # 遍历 study_list 提取元数据
+    phase1_studies = []
+
+    logger.info(
+        f"  [{pid[:25]}] Phase 1: {len(study_list)} study/studies from parse, "
+        f"{len(extraction_hints)} extraction hints"
     )
 
-    logger.info(f"  [{pid[:25]}] Phase1: prompt {len(prompt)} chars, "
-                f"parse={'success' if parse_success else 'failed'}, calling LLM (max_tokens={config.llm.max_tokens})...")
-    result = llm.call_json(prompt, max_tokens=config.llm.max_tokens, node_name="extract_phase1")
-    if not result:
-        logger.warning(f"  [{pid[:25]}] Phase1 FAILED: LLM returned no result (timeout/error)")
-        # 记录提取错误，供 postprocess 区分"超时"和"无数据"
-        if "extraction_errors" not in state:
-            state["extraction_errors"] = []
-        state["extraction_errors"].append({
-            "study_index": -1,
-            "study_title": "Phase1全文提取",
-            "error": "LLM提取超时或无返回",
-        })
-        return {
-            "phase1_result": {"paper": {}, "studies": []},
-            "extraction_errors": state.get("extraction_errors", []),
-            "status": "phase1_failed",
-        }
+    for i, study_info in enumerate(study_list):
+        study_title = study_info.get("study_title", "")
+        factors = study_info.get("factors", [])
 
-    studies = result.get("studies", [])
-    logger.info(f"  [{pid[:25]}] Phase1 done: {len(studies)} study/studies identified")
+        # 构建因子描述
+        factors_desc = ", ".join(
+            f"{f.get('name', '')} ({len(f.get('levels', []))} 水平)"
+            for f in factors
+        )
+
+        logger.info(f"  [{pid[:25]}] Study {i+1}/{len(study_list)}: '{study_title[:50]}' ({factors_desc})")
+
+        # 使用 hints 构建相关内容
+        relevant_content = build_relevant_content_from_hints(extraction_hints)
+
+        # 构建品种信息
+        varieties_text = ""
+        if variety_groups:
+            varieties_text = "\n".join(
+                f"  - {v.get('name', '')} (CK={v.get('is_check', False)})"
+                for group in variety_groups
+                for v in group.get("varieties", [])
+            )
+
+        prompt = prompt_template.format(
+            paper_id=pid,
+            doi=paper_meta.get("doi", ""),
+            title=paper_meta.get("title", ""),
+            year=paper_meta.get("year", ""),
+            journal=paper_meta.get("journal", ""),
+            crops_text=crops_text,
+            study_title=study_title,
+            factors_desc=factors_desc,
+            varieties_text=varieties_text,
+            relevant_content=relevant_content,
+            extraction_hints=hints_text,
+            supplementary_info=supplementary_info,
+        )
+
+        max_tokens = max(config.llm.max_tokens, 4096)
+        study_data = llm.call_json(prompt, max_tokens=max_tokens, node_name="extract_phase1")
+
+        if study_data:
+            phase1_studies.append(study_data)
+            logger.info(
+                f"  [{pid[:25]}] Study {i+1}/{len(study_list)}: '{study_title[:40]}' → "
+                f"year={study_data.get('trial_year', '?')}, location={study_data.get('site_administrative_region', '?')}"
+            )
+        else:
+            logger.warning(
+                f"  [{pid[:25]}] Study {i+1}/{len(study_list)}: '{study_title[:40]}' → FAILED (LLM超时/无返回)"
+            )
+            # 记录错误
+            if "extraction_errors" not in state:
+                state["extraction_errors"] = []
+            state["extraction_errors"].append({
+                "study_index": i,
+                "study_title": study_title[:60],
+                "error": "LLM提取超时或无返回",
+            })
+            # 仍然添加一个空 study 保持索引对齐
+            phase1_studies.append({
+                "study_title": study_title,
+                "trial_year": "",
+                "site_administrative_region": "",
+                "_failed": True,
+            })
+
+    logger.info(f"  [{pid[:25]}] Phase 1 done: {len(phase1_studies)} study/studies processed")
 
     return {
-        "phase1_result": result,
+        "phase1_result": {
+            "paper": {
+                "crop_species": crops_text,
+                "data_file_link": data_file_link,
+                "data_file_description": doc_context.get("data_file_description"),
+            },
+            "studies": phase1_studies,
+        },
+        "extraction_errors": state.get("extraction_errors", []),
         "status": "phase1_done",
+        "node_status": {"extract_phase1": "phase1_done"},
     }

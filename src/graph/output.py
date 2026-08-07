@@ -143,12 +143,14 @@ def insert_extraction(conn, result: dict, paper_id: str):
         # parse_context 从 parse 节点输出（doc_context + extraction_hints）
         # lookup_results 从 lookup 节点输出（补充后的信息）
         # evidence_nodes 从 evidence 节点输出（验证后的证据）
+        # node_status 记录每个节点的执行状态
         parse_context_data = {
             "doc_context": result.get("doc_context", {}),
             "extraction_hints": result.get("extraction_hints", []),
             "needs_lookup": result.get("needs_lookup", False),
             "lookup_results": result.get("lookup_results", []),
             "evidence_nodes": result.get("evidence_nodes", []),
+            "node_status": result.get("node_status", {}),
         }
         cur.execute("""
             INSERT INTO pe_core_papers
@@ -441,22 +443,28 @@ def update_paper_status(
     duration_sec: float = 0.0,
     error_message: str = "",
     run_id: str = "",
+    last_node: str = "",
+    node_status: dict = None,
 ):
     """记录或更新一篇论文的处理状态（幂等）。"""
     from datetime import datetime
     with conn.cursor() as cur:
         cur.execute("""
             INSERT INTO pe_reg_paper_status
-            (paper_id, title, target_step, status, duration_sec, error_message, run_id, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            (paper_id, title, target_step, status, duration_sec, error_message, run_id,
+             last_node, node_status, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (paper_id) DO UPDATE SET
                 title = EXCLUDED.title, target_step = EXCLUDED.target_step,
                 status = EXCLUDED.status, duration_sec = EXCLUDED.duration_sec,
                 error_message = EXCLUDED.error_message, run_id = EXCLUDED.run_id,
+                last_node = EXCLUDED.last_node, node_status = EXCLUDED.node_status,
                 updated_at = EXCLUDED.updated_at
         """, (
             paper_id, title, target_step, status,
             round(duration_sec, 2), error_message, run_id,
+            last_node,
+            json.dumps(node_status, ensure_ascii=False) if node_status else None,
             datetime.now().isoformat(),
         ))
     conn.commit()

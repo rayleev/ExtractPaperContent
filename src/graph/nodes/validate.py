@@ -51,6 +51,7 @@ def validate_node(state: PaperState, config: AppConfig) -> dict:
         "validation_report": report,
         "flagged_records": report.get("flagged_variety_indices", []),
         "status": "validated",
+        "node_status": {"validate": "validated"},
     }
 
 
@@ -67,7 +68,7 @@ def targeted_llm_validate_node(
     """
     flagged = state.get("flagged_records", [])
     if not flagged:
-        return {"status": "validated_complete"}
+        return {"status": "validated_complete", "node_status": {"validate": "validated_complete"}}
 
     extraction = state.get("extraction", {})
     studies = extraction.get("studies", [])
@@ -184,4 +185,5 @@ def targeted_llm_validate_node(
     return {
         "status": "validated_complete",
         "validation_errors": state.get("validation_errors", []),
+        "node_status": {"validate": "validated_complete"},
     }

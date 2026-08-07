@@ -73,6 +73,7 @@ def _no_pdf(state: PaperState, paper_meta: dict, paper_id: str, download_id: str
         "paper_meta": paper_meta,
         "pdf_missing": True,
         "status": "no_pdf",
+        "node_status": {"download": "no_pdf"},
         "errors": state.get("errors", []) + [{
             "node": "download",
             "error": msg,
@@ -136,7 +137,7 @@ def download_node(state: PaperState, config: AppConfig, ss_client) -> dict:
         if _is_valid_pdf(pdf_save_path):
             logger.debug(f"  [{pid_log}] PDF already exists: {pdf_save_path}")
             paper_meta["pdf_path"] = str(pdf_save_path)
-            return {"paper_meta": paper_meta}
+            return {"paper_meta": paper_meta, "node_status": {"download": "downloaded"}}
         # 无效缓存（0字节/非PDF，多为中断下载残留）→ 删除后重新下载
         logger.warning(
             f"  [{pid_log}] Cached PDF invalid "
@@ -159,7 +160,7 @@ def download_node(state: PaperState, config: AppConfig, ss_client) -> dict:
         if _try_download_pdf(ss_client, download_id, pdf_save_path, pid_log):
             logger.info(f"  [{pid_log}] PDF downloaded (fallback): {pdf_save_path}")
             paper_meta["pdf_path"] = str(pdf_save_path)
-            return {"paper_meta": paper_meta, "status": state.get("status", "downloaded")}
+            return {"paper_meta": paper_meta, "status": state.get("status", "downloaded"), "node_status": {"download": "downloaded"}}
         return _no_pdf(
             state, paper_meta, paper_id, download_id,
             "resources unavailable and PDF download failed",
@@ -173,7 +174,7 @@ def download_node(state: PaperState, config: AppConfig, ss_client) -> dict:
         if _try_download_pdf(ss_client, download_id, pdf_save_path, pid_log):
             logger.info(f"  [{pid_log}] PDF downloaded: {pdf_save_path}")
             paper_meta["pdf_path"] = str(pdf_save_path)
-            return {"paper_meta": paper_meta, "status": state.get("status", "downloaded")}
+            return {"paper_meta": paper_meta, "status": state.get("status", "downloaded"), "node_status": {"download": "downloaded"}}
         logger.warning(f"  [{pid_log}] PDF exists but download failed, trying MD fallback")
 
     # ── 步骤 4: MD 兜底（parse_node 优先级 1 直读，跳过 MinerU）──
@@ -182,7 +183,7 @@ def download_node(state: PaperState, config: AppConfig, ss_client) -> dict:
         if md_save_path.exists() and _is_valid_md(md_save_path):
             logger.debug(f"  [{pid_log}] MD already exists: {md_save_path}")
             paper_meta["md_path"] = str(md_save_path)
-            return {"paper_meta": paper_meta}
+            return {"paper_meta": paper_meta, "node_status": {"download": "downloaded"}}
 
         try:
             success = ss_client.download_md(
@@ -196,7 +197,7 @@ def download_node(state: PaperState, config: AppConfig, ss_client) -> dict:
         if success and _is_valid_md(md_save_path):
             logger.info(f"  [{pid_log}] MD downloaded (skip MinerU): {md_save_path}")
             paper_meta["md_path"] = str(md_save_path)
-            return {"paper_meta": paper_meta, "status": state.get("status", "downloaded")}
+            return {"paper_meta": paper_meta, "status": state.get("status", "downloaded"), "node_status": {"download": "downloaded"}}
         logger.warning(f"  [{pid_log}] MD download failed")
 
     # ── 步骤 5: 无可用资源 ──

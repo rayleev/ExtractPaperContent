@@ -90,7 +90,7 @@ def evidence_node(
       - evidence_nodes: 验证后的证据列表
     """
     if not config.evidence_validation.enabled:
-        return {"evidence_nodes": [], "status": "evidence_skipped"}
+        return {"evidence_nodes": [], "status": "evidence_skipped", "node_status": {"evidence": "evidence_skipped"}}
 
     extraction = state.get("extraction", {})
     extraction_hints = state.get("extraction_hints", [])
@@ -107,7 +107,7 @@ def evidence_node(
     # 收集要验证的字段
     field_configs = config.evidence_validation.fields
     if not field_configs:
-        return {"evidence_nodes": [], "status": "evidence_skipped"}
+        return {"evidence_nodes": [], "status": "evidence_skipped", "node_status": {"evidence": "evidence_skipped"}}
 
     # 构建字段和候选证据列表
     field_values = []
@@ -166,6 +166,7 @@ def evidence_node(
             "evidence_nodes": [],
             "validation_errors": state.get("validation_errors", []),
             "status": "evidence_failed",
+            "node_status": {"evidence": "evidence_failed"},
         }
 
     evidence_nodes = result.get("evidence_nodes", [])
@@ -177,4 +178,5 @@ def evidence_node(
     return {
         "evidence_nodes": evidence_nodes,
         "status": "evidence_collected",
+        "node_status": {"evidence": "evidence_collected"},
     }

@@ -155,6 +155,7 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
         return {
             "extraction": combined,
             "status": "skipped",
+            "node_status": {"postprocess": "skipped"},
             "errors": state.get("errors", []) + [
                 {"node": "country_judge", "error": reason}
             ],
@@ -229,15 +230,22 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
             
             # 检查是否有 LLM 提取错误（超时/无返回）
             extraction_errors = state.get("extraction_errors", [])
-            if extraction_errors:
-                error_studies = ", ".join([e.get("study_title", "")[:30] for e in extraction_errors[:3]])
-                filter_parts.append(f"LLM提取超时({len(extraction_errors)}个study: {error_studies})")
+            # 区分真正的 LLM 超时和 hints 不足的情况
+            llm_timeout_errors = [e for e in extraction_errors if e.get("error") == "LLM提取超时或无返回"]
+            hints_insufficient_errors = [e for e in extraction_errors if e.get("error") == "hints_insufficient"]
+            if llm_timeout_errors:
+                error_studies = ", ".join([e.get("study_title", "")[:30] for e in llm_timeout_errors[:3]])
+                filter_parts.append(f"LLM提取超时({len(llm_timeout_errors)}个study: {error_studies})")
+            if hints_insufficient_errors:
+                error_studies = ", ".join([e.get("study_title", "")[:30] for e in hints_insufficient_errors[:3]])
+                filter_parts.append(f"hints不足跳过({len(hints_insufficient_errors)}个study: {error_studies})")
             
             reason = "、".join(filter_parts) if filter_parts else "所有 study 在后续处理中被过滤"
             logger.info(f"  [{pid[:25]}] Postprocess SKIP: {reason}")
             return {
                 "extraction": extraction,
                 "status": "skipped",
+                "node_status": {"postprocess": "skipped"},
                 "errors": state.get("errors", []) + [
                     {"node": "postprocess", "error": f"no valid studies remaining after filtering: {reason}"}
                 ],
@@ -248,4 +256,5 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
         "extraction_errors": state.get("extraction_errors", []),
         "validation_errors": state.get("validation_errors", []),
         "status": "postprocessed",
+        "node_status": {"postprocess": "postprocessed"},
     }

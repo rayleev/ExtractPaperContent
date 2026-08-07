@@ -74,3 +74,4 @@ class PaperState(TypedDict, total=False):
     status: str                         # pending/classifying/filtering/parsing/
                                         # extracting/processing/validating/
                                         # outputting/completed/failed/skipped
+    node_status: dict                   # {"parse": "parsed", "extract_phase1": "phase1_done", ...}

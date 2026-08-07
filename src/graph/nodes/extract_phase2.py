@@ -17,6 +17,7 @@ from pathlib import Path
 from src.config import AppConfig
 from src.clients.llm import LLMClient
 from src.graph.state import PaperState
+from src.graph.nodes._common import build_relevant_content_from_hints
 
 logger = logging.getLogger("paper_extractor")
 
@@ -162,48 +163,21 @@ def extract_phase2_node(
 
     phase2_results = []
 
-    def _build_relevant_content_from_hints(hints: list, max_chars: int = 8000) -> str:
-        """
-        从 extraction_hints 构建相关内容文本。
-
-        每个 hint 包含 context（字段出现的原文片段）和 source_table/source_tables。
-        去重后拼接，作为 LLM 输入（替代整篇论文）。
-        """
-        if not hints:
-            return ""
-
-        seen_contexts = set()
-        parts = []
-        total_chars = 0
-
-        for hint in hints:
-            context = hint.get("context", "").strip()
-            if not context or context in seen_contexts:
-                continue
-            seen_contexts.add(context)
-
-            # 添加 source_table 信息（支持新格式 source_table 字符串和旧格式 source_tables 列表）
-            source_table = hint.get("source_table", "")
-            source_tables = hint.get("source_tables", [])
-            if source_table:
-                table_info = f" [来源: {source_table}]"
-            elif source_tables:
-                table_info = f" [来源: {', '.join(source_tables)}]"
-            else:
-                table_info = ""
-
-            part = f"{context}{table_info}"
-            if total_chars + len(part) > max_chars:
-                break
-            parts.append(part)
-            total_chars += len(part)
-
-        return "\n\n---\n\n".join(parts)
-
     if use_phase1_studies:
         # ── 以 Phase 1 studies 为准 ──
         logger.info(f"  [{pid[:25]}] Phase 2: processing {len(studies)} study/studies from Phase 1")
         for i, s in enumerate(studies):
+            # 跳过 Phase 1 失败的 study（避免空上下文 LLM 调用）
+            if s.get("_failed"):
+                logger.warning(
+                    f"  [{pid[:25]}] Study {i+1}/{len(studies)}: '{s.get('study_title', '')[:40]}' → SKIPPED (Phase 1 failed)"
+                )
+                phase2_results.append({
+                    "study_index": i,
+                    "varieties": [],
+                })
+                continue
+
             study_title = s.get("study_title", "")
             logger.info(f"  [{pid[:25]}] Study {i+1}/{len(studies)}: '{study_title[:50]}' → calling LLM...")
             study_context = (
@@ -213,32 +187,13 @@ def extract_phase2_node(
                 f"试验站: {s.get('experimental_site_name', '')}"
             )
 
-            # 优先使用 hints 构建相关内容（比整篇论文小很多）
-            relevant_content = _build_relevant_content_from_hints(extraction_hints)
-            if len(relevant_content) >= 2000:
-                # hints 提供足够覆盖，使用精简内容
-                section_content = relevant_content
-                logger.info(
-                    f"  [{pid[:25]}] Study {i+1}: using hints-based content "
-                    f"({len(relevant_content)} chars)"
-                )
-            else:
-                # hints 覆盖不足，跳过该 study（parse 未识别到有效信息）
-                logger.warning(
-                    f"  [{pid[:25]}] Study {i+1}: hints insufficient ({len(relevant_content)} chars), skipping"
-                )
-                phase2_results.append({
-                    "study_index": i,
-                    "varieties": [],
-                })
-                if "extraction_errors" not in state:
-                    state["extraction_errors"] = []
-                state["extraction_errors"].append({
-                    "study_index": i,
-                    "study_title": study_title[:60],
-                    "error": "hints_insufficient",
-                })
-                continue
+            # 使用 hints 构建相关内容（比整篇论文小很多）
+            relevant_content = build_relevant_content_from_hints(extraction_hints)
+            section_content = relevant_content
+            logger.info(
+                f"  [{pid[:25]}] Study {i+1}: using hints-based content "
+                f"({len(relevant_content)} chars)"
+            )
 
             prompt = prompt_template.format(
                 paper_id=pid,
@@ -292,27 +247,13 @@ def extract_phase2_node(
             logger.info(f"  [{pid[:25]}] Study {i+1}/{len(document_tree)}: '{study_title[:50]}' → calling LLM...")
             study_context = f"试验名称: {study_title}"
 
-            # 优先使用 hints 构建相关内容
-            relevant_content = _build_relevant_content_from_hints(extraction_hints)
-            if len(relevant_content) >= 2000:
-                section_content = relevant_content
-            else:
-                # hints 覆盖不足，跳过该 study
-                logger.warning(
-                    f"  [{pid[:25]}] Study {i+1}: hints insufficient ({len(relevant_content)} chars), skipping"
-                )
-                phase2_results.append({
-                    "study_index": i,
-                    "varieties": [],
-                })
-                if "extraction_errors" not in state:
-                    state["extraction_errors"] = []
-                state["extraction_errors"].append({
-                    "study_index": i,
-                    "study_title": study_title[:60],
-                    "error": "hints_insufficient",
-                })
-                continue
+            # 使用 hints 构建相关内容
+            relevant_content = build_relevant_content_from_hints(extraction_hints)
+            section_content = relevant_content
+            logger.info(
+                f"  [{pid[:25]}] Study {i+1}: using hints-based content "
+                f"({len(relevant_content)} chars)"
+            )
 
             prompt = prompt_template.format(
                 paper_id=pid,
@@ -326,6 +267,7 @@ def extract_phase2_node(
                 variety_constraint=variety_constraint,
             )
 
+            # LLM 调用
             max_tokens = max(config.llm.max_tokens, 8192)
             logger.info(f"  [{pid[:25]}] Study {i+1}/{len(document_tree)}: LLM calling (max_tokens={max_tokens})...")
             study_data = llm.call_json(prompt, max_tokens=max_tokens, node_name="extract_phase2")
@@ -362,4 +304,5 @@ def extract_phase2_node(
         "phase2_results": phase2_results,
         "extraction_errors": state.get("extraction_errors", []),
         "status": "phase2_done",
+        "node_status": {"extract_phase2": "phase2_done"},
     }

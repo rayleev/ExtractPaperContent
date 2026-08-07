@@ -52,7 +52,10 @@ def lookup_node(
     lookup_hints = [h for h in extraction_hints if h.get("action") == "needs_lookup"]
     if not lookup_hints:
         logger.info(f"  [{pid[:25]}] Lookup: no needs_lookup hints, skipping")
-        return {"lookup_results": [], "status": "lookup_skipped"}
+        return {"lookup_results": [], "status": "lookup_skipped", "node_status": {"lookup": "lookup_skipped"}}
+
+    if not needs_lookup:
+        return {"lookup_results": [], "status": "lookup_skipped", "node_status": {"lookup": "lookup_skipped"}}
 
     logger.info(f"  [{pid[:25]}] Lookup: processing {len(lookup_hints)} hints")
 
@@ -91,6 +94,7 @@ def lookup_node(
             "lookup_results": [],
             "extraction_errors": state.get("extraction_errors", []),
             "status": "lookup_failed",
+            "node_status": {"lookup": "lookup_failed"},
         }
 
     lookup_results = result.get("lookup_results", [])
@@ -99,4 +103,5 @@ def lookup_node(
     return {
         "lookup_results": lookup_results,
         "status": "lookup_done",
+        "node_status": {"lookup": "lookup_done"},
     }
