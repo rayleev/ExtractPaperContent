@@ -93,5 +93,22 @@ check("20m^2", _parse_plot_size_m2("20m^2"), 20.0)
 check("\u957f 5m\u3001\u5bbd 2.66m", _parse_plot_size_m2("\u957f 5m\u3001\u5bbd 2.66m"), round(5 * 2.66, 2))
 check("5m\u00d72.66m", _parse_plot_size_m2("5m\u00d72.66m"), round(5 * 2.66, 2))
 
+# ── NPK 换算为 kg/亩 ──
+print("\n=== NPK convert to kg/亩 ===")
+# 通过 _convert_yield 算出 kg/ha，再除以 15 得到 kg/亩
+def convert_npk(value, unit, plot_size="", planting_density=""):
+    """模拟 NPK 换算：先转 kg/ha，再转 kg/亩"""
+    kg_per_ha = convert_yield(value, unit, plot_size=plot_size, planting_density=planting_density)
+    if kg_per_ha is None:
+        return None
+    return round(kg_per_ha / 15.0, 2)
+
+check("180 kg/ha N → kg/亩", convert_npk(180, "kg/ha"), round(180 / 15, 2))
+check("150 kg/hm² P → kg/亩", convert_npk(150, "kg/hm²"), round(150 / 15, 2))
+check("120 kg/亩 K → kg/亩", convert_npk(120, "kg/亩"), 120.0)  # 120 kg/亩 → 1800 kg/ha → 120 kg/亩
+check("20000 g/株 + 密度", convert_npk(20000, "g/株", planting_density="22.5万穴/公顷"), round(20 * 225000 / 15, 2))
+check("90 kg P2O5/ha → kg/亩", convert_npk(90, "kg/ha"), round(90 / 15, 2))
+check("无单位 → None", convert_npk(100, ""), None)
+
 print()
 print("ALL PASSED" if all_ok else "SOME FAILED")

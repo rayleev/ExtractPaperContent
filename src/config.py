@@ -67,6 +67,7 @@ class LLMConfig:
     classify_max_tokens: int = 1000
     evidence_max_tokens: int = 2000
     validate_max_tokens: int = 200
+    throttle_interval: float = 0.5        # 请求最小间隔（秒），0=不限流
     # 深度思考（thinking）配置
     # 使用 chat_template_kwargs 格式：{"enable_thinking": true/false}
     # CC映射代理只接受此格式
@@ -278,6 +279,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
         classify_max_tokens=l.get("classify_max_tokens", _get_default(LLMConfig, "classify_max_tokens")),
         evidence_max_tokens=l.get("evidence_max_tokens", _get_default(LLMConfig, "evidence_max_tokens")),
         validate_max_tokens=l.get("validate_max_tokens", _get_default(LLMConfig, "validate_max_tokens")),
+        throttle_interval=l.get("throttle_interval", _get_default(LLMConfig, "throttle_interval")),
         thinking=l.get("thinking", _get_default(LLMConfig, "thinking")),
         thinking_overrides=l.get("thinking_overrides", _get_default(LLMConfig, "thinking_overrides")),
     )

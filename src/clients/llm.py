@@ -40,12 +40,15 @@ class LLMClient:
         return text
 
     def _throttle(self):
-        """请求间隔至少 0.5 秒，避免瞬间并发冲击 LLM 服务。"""
+        """请求最小间隔（秒），通过 config.throttle_interval 配置。0=不限流。"""
+        interval = self.config.throttle_interval
+        if interval <= 0:
+            return
         with LLMClient._call_lock:
             now = time.time()
             elapsed = now - LLMClient._last_call_time
-            if elapsed < 0.5:
-                time.sleep(0.5 - elapsed)
+            if elapsed < interval:
+                time.sleep(interval - elapsed)
             LLMClient._last_call_time = time.time()
 
     def _resolve_thinking(self, node_name: str | None = None) -> dict | None:

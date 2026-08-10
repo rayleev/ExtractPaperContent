@@ -172,6 +172,7 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
     try:
         result = ExtractionResult.model_validate(combined)
         result.compute_standard_yields(config)  # 传入 config 以使用配置的换算表
+        result.compute_standard_nutrients(config)  # NPK 换算为 kg/亩
         extraction = result.model_dump()
         n_studies = len(extraction.get("studies", []))
         n_varieties = sum(len(s.get("varieties", [])) for s in extraction.get("studies", []))

@@ -42,6 +42,7 @@ llm:
   classify_max_tokens: 1000        # 分类节点输出上限
   evidence_max_tokens: 2000        # 证据验证节点输出上限
   validate_max_tokens: 200         # 规则验证节点输出上限
+  throttle_interval: 0.5           # 请求最小间隔（秒），0=不限流。LLM API 并发能力高可设为 0
   # 深度思考（thinking）配置 — 仅 GLM-5 等支持 thinking 的模型生效
   # 使用 chat_template_kwargs 格式（CC映射代理只接受此格式）
   thinking: {"enable_thinking": false}  # 全局关闭深度思考

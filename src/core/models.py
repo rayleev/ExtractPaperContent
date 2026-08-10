@@ -80,9 +80,12 @@ class VarietyYield(BaseModel):
     k_raw_value: Optional[float] = Field(None, description="[OPTIONAL] 该处理的纯钾(K2O)施用量数值。只抄录论文明确写出的纯养分量")
     k_raw_unit: Optional[str] = Field(None, description="[OPTIONAL] 钾施用量原始单位")
     nutrient_source_location: Optional[str] = Field(None, description="[OPTIONAL] 氮磷钾施用量数据的来源位置，如 '表2'、'表3-N180行'、'材料方法'")
-    n_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的 kg N/ha 值，LLM不要填（本期留空，换算逻辑后续实现）")
-    p_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的 kg P2O5/ha 值，LLM不要填（本期留空）")
-    k_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的 kg K2O/ha 值，LLM不要填（本期留空）")
+    n_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的 kg N/亩 值，LLM不要填")
+    p_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的 kg P2O5/亩 值，LLM不要填")
+    k_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的 kg K2O/亩 值，LLM不要填")
+    n_standard_unit: Optional[str] = Field(None, description="[PROGRAM] 程序自动填充 'kg/亩'")
+    p_standard_unit: Optional[str] = Field(None, description="[PROGRAM] 程序自动填充 'kg/亩'")
+    k_standard_unit: Optional[str] = Field(None, description="[PROGRAM] 程序自动填充 'kg/亩'")
 
     @field_validator("pct_over_check", mode="before")
     @classmethod
@@ -323,6 +326,72 @@ class ExtractionResult(BaseModel):
                         planting_density=study.planting_density or "",
                     )
                     v.yield_standard_unit = "kg/ha"
+
+    def compute_standard_nutrients(self, config=None):
+        """后处理：根据 n/p/k_raw_value + n/p/k_raw_unit 程序化换算 n/p/k_standard_value。
+
+        换算目标单位：kg/亩
+
+        Args:
+            config: AppConfig 实例，用于读取单位换算表。为 None 时使用默认换算表。
+        """
+        # 从 config 获取换算表，或使用默认值
+        if config is not None:
+            mass_to_kg = config.unit_conversion.mass_to_kg
+            area_to_ha = config.unit_conversion.area_to_ha
+        else:
+            mass_to_kg = {
+                "g": 0.001, "kg": 1.0, "t": 1000.0, "ton": 1000.0, "tonne": 1000.0,
+                "mg": 1e-6, "Mg": 1000.0,
+                "斤": 0.5, "公斤": 1.0, "lb": 0.453592,
+            }
+            area_to_ha = {
+                "m2": 0.0001, "平方米": 0.0001,
+                "ha": 1.0, "hm2": 1.0, "公顷": 1.0,
+                "亩": 1.0 / 15.0, "mu": 1.0 / 15.0, "667m2": 1.0 / 15.0,
+                "acre": 0.404686,
+            }
+
+        context_plot = {"plot", "小区"}
+        context_plant = {"plant", "株", "pot", "盆", "ear", "穗", "hill", "穴", "棵"}
+
+        for study in self.studies:
+            for v in study.varieties:
+                # 氮 N
+                if v.n_raw_value is not None and v.n_raw_unit:
+                    kg_per_ha = _convert_yield(
+                        v.n_raw_value, v.n_raw_unit,
+                        mass_to_kg, area_to_ha, context_plot, context_plant,
+                        plot_size=study.plot_size or "",
+                        planting_density=study.planting_density or "",
+                    )
+                    if kg_per_ha is not None:
+                        v.n_standard_value = round(kg_per_ha / 15.0, 2)
+                        v.n_standard_unit = "kg/亩"
+
+                # 磷 P
+                if v.p_raw_value is not None and v.p_raw_unit:
+                    kg_per_ha = _convert_yield(
+                        v.p_raw_value, v.p_raw_unit,
+                        mass_to_kg, area_to_ha, context_plot, context_plant,
+                        plot_size=study.plot_size or "",
+                        planting_density=study.planting_density or "",
+                    )
+                    if kg_per_ha is not None:
+                        v.p_standard_value = round(kg_per_ha / 15.0, 2)
+                        v.p_standard_unit = "kg/亩"
+
+                # 钾 K
+                if v.k_raw_value is not None and v.k_raw_unit:
+                    kg_per_ha = _convert_yield(
+                        v.k_raw_value, v.k_raw_unit,
+                        mass_to_kg, area_to_ha, context_plot, context_plant,
+                        plot_size=study.plot_size or "",
+                        planting_density=study.planting_density or "",
+                    )
+                    if kg_per_ha is not None:
+                        v.k_standard_value = round(kg_per_ha / 15.0, 2)
+                        v.k_standard_unit = "kg/亩"
 
 
 def _normalize_unit(unit: str) -> str:
