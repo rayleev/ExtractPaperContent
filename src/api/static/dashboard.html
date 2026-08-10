@@ -26,9 +26,10 @@
   /* grid */
   .grid { display: grid; gap: 16px; margin-bottom: 16px; }
   .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-5 { grid-template-columns: repeat(5, 1fr); }
   .grid-2 { grid-template-columns: 1fr 1fr; }
   .grid-4 { grid-template-columns: repeat(4, 1fr); }
-  @media (max-width: 768px) { .grid-3, .grid-2, .grid-4 { grid-template-columns: 1fr; } }
+  @media (max-width: 768px) { .grid-3, .grid-4, .grid-5 { grid-template-columns: 1fr; } }
 
   /* card */
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
@@ -118,10 +119,17 @@
   </header>
 
   <!-- health -->
-  <div class="grid grid-3" id="healthCards">
-    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 1 (:8004)</div><div class="detail">checking...</div></div></div>
-    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 2 (:8002)</div><div class="detail">checking...</div></div></div>
-    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 3 (:8003)</div><div class="detail">checking...</div></div></div>
+  <div class="grid grid-5" id="healthCards">
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 1 (:8090)</div><div class="detail">checking...</div></div></div>
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 2 (:8091)</div><div class="detail">checking...</div></div></div>
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 3 (:8092)</div><div class="detail">checking...</div></div></div>
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 4 (:8093)</div><div class="detail">checking...</div></div></div>
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 5 (:8094)</div><div class="detail">checking...</div></div></div>
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 6 (:8095)</div><div class="detail">checking...</div></div></div>
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 7 (:8096)</div><div class="detail">checking...</div></div></div>
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 8 (:8097)</div><div class="detail">checking...</div></div></div>
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 9 (:8098)</div><div class="detail">checking...</div></div></div>
+    <div class="card health-card"><div class="health-dot loading"></div><div class="health-info"><div class="name">Instance 10 (:8099)</div><div class="detail">checking...</div></div></div>
   </div>
 
   <!-- progress -->
@@ -246,7 +254,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const PORTS = [8004, 8002, 8003];
+const PORTS = [8090, 8091, 8092, 8093, 8094, 8095, 8096, 8097, 8098, 8099];
 const BASE = window.location.origin;
 
 function fmt(n) { return n == null ? '--' : n.toLocaleString(); }
