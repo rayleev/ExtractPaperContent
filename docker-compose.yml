@@ -1,13 +1,13 @@
 # ============================================================
 #  Paper Extractor — 多实例 Docker Compose 部署
 #
-#  3 个 extractor 实例共享：
+#  10 个 extractor 实例共享：
 #    - PostgreSQL 数据库（通过 infra 网络用容器名 postgres 访问）
 #    - 宿主机 bind mount 目录（docs/PDF、docs/meta、output/parsed），
-#      三容器挂载同一路径，避免重复下载，宿主机可直接管理文件
+#      多容器挂载同一路径，避免重复下载，宿主机可直接管理文件
 #    - 各自的 LLM API Key（环境变量注入）
 #
-#  注意：每个实例有独立的 cache 目录（cache-1/2/3），
+#  注意：每个实例有独立的 cache 目录（cache-1/.../cache-10），
 #        避免多容器并发写同一个 SQLite checkpoint 文件导致锁冲突。
 #
 #  部署/配置路径统一在 /home/root01/deploy/paper-extractor/ 下，
@@ -19,7 +19,7 @@
 #    paper-extractor-net → 应用内部网络
 #
 #  必需环境变量（在 .env 文件中设置）：
-#    DB_HOST, DB_PASSWORD, LLM_API_KEY_1/2/3, MINERU_API_KEY_1/2/3
+#    DB_HOST, DB_PASSWORD, LLM_API_KEY_1..10, MINERU_API_KEY_1..10
 #
 #  启动: docker compose up -d
 #  日志: docker compose logs -f
@@ -54,7 +54,7 @@ services:
     container_name: extractor-1
     restart: unless-stopped
     ports:
-      - "${PORT_1:-8004}:8000"
+      - "${PORT_1:-8090}:8000"
     environment:
       <<: *common-env
       INSTANCE_ID: instance_1
@@ -84,7 +84,7 @@ services:
     container_name: extractor-2
     restart: unless-stopped
     ports:
-      - "${PORT_2:-8002}:8000"
+      - "${PORT_2:-8091}:8000"
     environment:
       <<: *common-env
       INSTANCE_ID: instance_2
@@ -114,7 +114,7 @@ services:
     container_name: extractor-3
     restart: unless-stopped
     ports:
-      - "${PORT_3:-8003}:8000"
+      - "${PORT_3:-8092}:8000"
     environment:
       <<: *common-env
       INSTANCE_ID: instance_3
@@ -128,6 +128,216 @@ services:
       - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
       - /home/root01/deploy/paper-extractor/output/runs-3:/app/output/runs
       - /home/root01/deploy/paper-extractor/cache-3:/app/cache
+    logging: *common-logging
+    env_file:
+      - /home/root01/deploy/paper-extractor/.env
+    networks:
+      - infra
+      - paper-extractor-net
+
+  # ── 实例 4 ──
+  extractor-4:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_TAG:-paper-extractor:latest}
+    container_name: extractor-4
+    restart: unless-stopped
+    ports:
+      - "${PORT_4:-8093}:8000"
+    environment:
+      <<: *common-env
+      INSTANCE_ID: instance_4
+      LLM_API_KEY: ${LLM_API_KEY_4:?请在 .env 中设置 LLM_API_KEY_4}
+      MINERU_API_KEY: ${MINERU_API_KEY_4:-}
+    volumes:
+      - /home/root01/deploy/paper-extractor/config.yaml:/app/config.yaml:ro
+      - /home/root01/deploy/paper-extractor/docs/PDF:/app/docs/PDF
+      - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
+      - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
+      - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/output/runs-4:/app/output/runs
+      - /home/root01/deploy/paper-extractor/cache-4:/app/cache
+    logging: *common-logging
+    env_file:
+      - /home/root01/deploy/paper-extractor/.env
+    networks:
+      - infra
+      - paper-extractor-net
+
+  # ── 实例 5 ──
+  extractor-5:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_TAG:-paper-extractor:latest}
+    container_name: extractor-5
+    restart: unless-stopped
+    ports:
+      - "${PORT_5:-8094}:8000"
+    environment:
+      <<: *common-env
+      INSTANCE_ID: instance_5
+      LLM_API_KEY: ${LLM_API_KEY_5:?请在 .env 中设置 LLM_API_KEY_5}
+      MINERU_API_KEY: ${MINERU_API_KEY_5:-}
+    volumes:
+      - /home/root01/deploy/paper-extractor/config.yaml:/app/config.yaml:ro
+      - /home/root01/deploy/paper-extractor/docs/PDF:/app/docs/PDF
+      - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
+      - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
+      - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/output/runs-5:/app/output/runs
+      - /home/root01/deploy/paper-extractor/cache-5:/app/cache
+    logging: *common-logging
+    env_file:
+      - /home/root01/deploy/paper-extractor/.env
+    networks:
+      - infra
+      - paper-extractor-net
+
+  # ── 实例 6 ──
+  extractor-6:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_TAG:-paper-extractor:latest}
+    container_name: extractor-6
+    restart: unless-stopped
+    ports:
+      - "${PORT_6:-8095}:8000"
+    environment:
+      <<: *common-env
+      INSTANCE_ID: instance_6
+      LLM_API_KEY: ${LLM_API_KEY_6:?请在 .env 中设置 LLM_API_KEY_6}
+      MINERU_API_KEY: ${MINERU_API_KEY_6:-}
+    volumes:
+      - /home/root01/deploy/paper-extractor/config.yaml:/app/config.yaml:ro
+      - /home/root01/deploy/paper-extractor/docs/PDF:/app/docs/PDF
+      - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
+      - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
+      - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/output/runs-6:/app/output/runs
+      - /home/root01/deploy/paper-extractor/cache-6:/app/cache
+    logging: *common-logging
+    env_file:
+      - /home/root01/deploy/paper-extractor/.env
+    networks:
+      - infra
+      - paper-extractor-net
+
+  # ── 实例 7 ──
+  extractor-7:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_TAG:-paper-extractor:latest}
+    container_name: extractor-7
+    restart: unless-stopped
+    ports:
+      - "${PORT_7:-8096}:8000"
+    environment:
+      <<: *common-env
+      INSTANCE_ID: instance_7
+      LLM_API_KEY: ${LLM_API_KEY_7:?请在 .env 中设置 LLM_API_KEY_7}
+      MINERU_API_KEY: ${MINERU_API_KEY_7:-}
+    volumes:
+      - /home/root01/deploy/paper-extractor/config.yaml:/app/config.yaml:ro
+      - /home/root01/deploy/paper-extractor/docs/PDF:/app/docs/PDF
+      - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
+      - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
+      - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/output/runs-7:/app/output/runs
+      - /home/root01/deploy/paper-extractor/cache-7:/app/cache
+    logging: *common-logging
+    env_file:
+      - /home/root01/deploy/paper-extractor/.env
+    networks:
+      - infra
+      - paper-extractor-net
+
+  # ── 实例 8 ──
+  extractor-8:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_TAG:-paper-extractor:latest}
+    container_name: extractor-8
+    restart: unless-stopped
+    ports:
+      - "${PORT_8:-8097}:8000"
+    environment:
+      <<: *common-env
+      INSTANCE_ID: instance_8
+      LLM_API_KEY: ${LLM_API_KEY_8:?请在 .env 中设置 LLM_API_KEY_8}
+      MINERU_API_KEY: ${MINERU_API_KEY_8:-}
+    volumes:
+      - /home/root01/deploy/paper-extractor/config.yaml:/app/config.yaml:ro
+      - /home/root01/deploy/paper-extractor/docs/PDF:/app/docs/PDF
+      - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
+      - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
+      - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/output/runs-8:/app/output/runs
+      - /home/root01/deploy/paper-extractor/cache-8:/app/cache
+    logging: *common-logging
+    env_file:
+      - /home/root01/deploy/paper-extractor/.env
+    networks:
+      - infra
+      - paper-extractor-net
+
+  # ── 实例 9 ──
+  extractor-9:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_TAG:-paper-extractor:latest}
+    container_name: extractor-9
+    restart: unless-stopped
+    ports:
+      - "${PORT_9:-8098}:8000"
+    environment:
+      <<: *common-env
+      INSTANCE_ID: instance_9
+      LLM_API_KEY: ${LLM_API_KEY_9:?请在 .env 中设置 LLM_API_KEY_9}
+      MINERU_API_KEY: ${MINERU_API_KEY_9:-}
+    volumes:
+      - /home/root01/deploy/paper-extractor/config.yaml:/app/config.yaml:ro
+      - /home/root01/deploy/paper-extractor/docs/PDF:/app/docs/PDF
+      - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
+      - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
+      - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/output/runs-9:/app/output/runs
+      - /home/root01/deploy/paper-extractor/cache-9:/app/cache
+    logging: *common-logging
+    env_file:
+      - /home/root01/deploy/paper-extractor/.env
+    networks:
+      - infra
+      - paper-extractor-net
+
+  # ── 实例 10 ──
+  extractor-10:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${IMAGE_TAG:-paper-extractor:latest}
+    container_name: extractor-10
+    restart: unless-stopped
+    ports:
+      - "${PORT_10:-8099}:8000"
+    environment:
+      <<: *common-env
+      INSTANCE_ID: instance_10
+      LLM_API_KEY: ${LLM_API_KEY_10:?请在 .env 中设置 LLM_API_KEY_10}
+      MINERU_API_KEY: ${MINERU_API_KEY_10:-}
+    volumes:
+      - /home/root01/deploy/paper-extractor/config.yaml:/app/config.yaml:ro
+      - /home/root01/deploy/paper-extractor/docs/PDF:/app/docs/PDF
+      - /home/root01/deploy/paper-extractor/docs/meta:/app/docs/meta
+      - /home/root01/deploy/paper-extractor/output/parsed:/app/output/parsed
+      - /home/root01/deploy/paper-extractor/output/logs:/app/output/logs
+      - /home/root01/deploy/paper-extractor/output/runs-10:/app/output/runs
+      - /home/root01/deploy/paper-extractor/cache-10:/app/cache
     logging: *common-logging
     env_file:
       - /home/root01/deploy/paper-extractor/.env

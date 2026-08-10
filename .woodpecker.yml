@@ -6,7 +6,7 @@
 # 配置/数据统一存放在 /home/root01/deploy/paper-extractor/ 下：
 #   config.yaml     → 由 CONFIG_YAML secret 写入
 #   .env            → 由 ENV_FILE secret 写入
-#   docs/PDF, docs/meta, output/parsed, output/logs, cache-1/2/3 → 运行时数据目录
+#   docs/PDF, docs/meta, output/parsed, output/logs, cache-1/.../cache-10 → 运行时数据目录
 #
 # docker-compose.yml 使用绝对路径挂载，不依赖 woodpecker 临时工作区。
 #
@@ -15,9 +15,16 @@
 #   ENV_FILE     → 完整的 .env 内容
 #
 # 端口分配（宿主机:容器）:
-#   extractor-1  8004:8000
-#   extractor-2  8002:8000
-#   extractor-3  8003:8000
+#   extractor-1  8090:8000
+#   extractor-2  8091:8000
+#   extractor-3  8092:8000
+#   extractor-4  8093:8000
+#   extractor-5  8094:8000
+#   extractor-6  8095:8000
+#   extractor-7  8096:8000
+#   extractor-8  8097:8000
+#   extractor-9  8098:8000
+#   extractor-10 8099:8000
 # ============================================================
 
 steps:
@@ -39,7 +46,13 @@ steps:
         mkdir -p "$DEPLOY_DIR/docs/PDF" "$DEPLOY_DIR/docs/meta" \
                  "$DEPLOY_DIR/output/parsed" "$DEPLOY_DIR/output/logs" \
                  "$DEPLOY_DIR/output/runs-1" "$DEPLOY_DIR/output/runs-2" "$DEPLOY_DIR/output/runs-3" \
-                 "$DEPLOY_DIR/cache-1" "$DEPLOY_DIR/cache-2" "$DEPLOY_DIR/cache-3"
+                 "$DEPLOY_DIR/output/runs-4" "$DEPLOY_DIR/output/runs-5" "$DEPLOY_DIR/output/runs-6" \
+                 "$DEPLOY_DIR/output/runs-7" "$DEPLOY_DIR/output/runs-8" "$DEPLOY_DIR/output/runs-9" \
+                 "$DEPLOY_DIR/output/runs-10" \
+                 "$DEPLOY_DIR/cache-1" "$DEPLOY_DIR/cache-2" "$DEPLOY_DIR/cache-3" \
+                 "$DEPLOY_DIR/cache-4" "$DEPLOY_DIR/cache-5" "$DEPLOY_DIR/cache-6" \
+                 "$DEPLOY_DIR/cache-7" "$DEPLOY_DIR/cache-8" "$DEPLOY_DIR/cache-9" \
+                 "$DEPLOY_DIR/cache-10"
 
         # 写入前先删除可能残留的同名目录（Docker bind mount 会把目录创建出来，echo 写入会失败）
         rm -rf "$DEPLOY_DIR/config.yaml" "$DEPLOY_DIR/.env" 2>/dev/null || true
@@ -63,7 +76,7 @@ steps:
         # 利用 docker 容器内的 root 权限 chown，不依赖宿主机 sudo
         # .env 不 chown，保持 root 属主 + 600 权限，让容器内 1000 进程能读但不能改（防 RCE 改凭据）
         chmod 600 "$DEPLOY_DIR/.env" 2>/dev/null || true
-        docker run --rm -v "$DEPLOY_DIR":/data alpine chown -R 1000:1000 /data/docs /data/output /data/cache-1 /data/cache-2 /data/cache-3
+        docker run --rm -v "$DEPLOY_DIR":/data alpine chown -R 1000:1000 /data/docs /data/output /data/cache-1 /data/cache-2 /data/cache-3 /data/cache-4 /data/cache-5 /data/cache-6 /data/cache-7 /data/cache-8 /data/cache-9 /data/cache-10
         docker run --rm -v "$DEPLOY_DIR":/data alpine chown 1000:1000 /data/config.yaml
         echo "✓ 数据目录属主已归位为 1000:1000"
 
@@ -84,8 +97,8 @@ steps:
         # ── 4. 停止旧容器 ──
         # 不依赖 docker compose down（project name 不匹配时无法停止旧容器）
         # 直接用 docker rm -f 按容器名删除，确保不残留
-        docker stop extractor-1 extractor-2 extractor-3 2>/dev/null || true
-        docker rm -f extractor-1 extractor-2 extractor-3 2>/dev/null || true
+        docker stop extractor-1 extractor-2 extractor-3 extractor-4 extractor-5 extractor-6 extractor-7 extractor-8 extractor-9 extractor-10 2>/dev/null || true
+        docker rm -f extractor-1 extractor-2 extractor-3 extractor-4 extractor-5 extractor-6 extractor-7 extractor-8 extractor-9 extractor-10 2>/dev/null || true
         echo "旧容器已停止"
 
         # ── 5. 启动服务（失败时执行回滚，不被 set -e 提前退出）──
@@ -104,11 +117,11 @@ steps:
         echo "服务已启动"
 
         # ── 6. 健康检查（最多 60s）──
-        # 容器名是 extractor-1/2/3，通过 paper-extractor-net 网络用容器名:8000 访问
+        # 容器名是 extractor-1/2/3/4/5/6/7/8/9/10，通过 paper-extractor-net 网络用容器名:8000 访问
         echo "等待服务就绪..."
         for i in $(seq 1 20); do
           HEALTHY=true
-          for idx in 1 2 3; do
+          for idx in 1 2 3 4 5 6 7 8 9 10; do
             if ! docker run --rm --network paper-extractor-net curlimages/curl -fsS --max-time 2 http://extractor-$idx:8000/health > /dev/null 2>&1; then
               HEALTHY=false
               break
@@ -124,8 +137,8 @@ steps:
 
         # ── 7. 健康检查失败 → 回滚 ──
         echo "✗ 新容器未就绪，执行回滚..."
-        docker stop extractor-1 extractor-2 extractor-3 2>/dev/null || true
-        docker rm -f extractor-1 extractor-2 extractor-3 2>/dev/null || true
+        docker stop extractor-1 extractor-2 extractor-3 extractor-4 extractor-5 extractor-6 extractor-7 extractor-8 extractor-9 extractor-10 2>/dev/null || true
+        docker rm -f extractor-1 extractor-2 extractor-3 extractor-4 extractor-5 extractor-6 extractor-7 extractor-8 extractor-9 extractor-10 2>/dev/null || true
         if [ -n "$OLD_IMAGE" ]; then
           IMAGE_TAG="$OLD_IMAGE" docker compose --env-file "$DEPLOY_DIR/.env" up -d --no-build
           echo "已回滚到旧镜像: $OLD_IMAGE"
