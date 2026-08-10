@@ -8,6 +8,8 @@ from __future__ import annotations
 import logging
 from typing import List
 
+from src.core.constants import POT_KEYWORDS, SINGLE_PLANT_KEYWORDS
+
 logger = logging.getLogger("paper_extractor")
 
 
@@ -49,15 +51,10 @@ def filter_non_field_experiments(studies: List[dict]) -> int:
       2. yield_raw_unit 为 g/株（单株计产，通常非大田）
       3. measurement_method 含"盆栽"/"单株"等关键词
 
+    例外：如果有 planting_density 或 plot_size，说明是大田单株取样、可换算为 kg/ha，保留。
+
     返回剔除数量。
     """
-    pot_keywords = [
-        "盆栽", "pot experiment", "greenhouse", "温室",
-        "人工气候室", "growth chamber", "培养箱",
-        "水培", "hydroponic", "营养液",
-        "模拟试验", "室内试验", "箱栽", "桶栽",
-    ]
-
     kept_studies = []
     removed_count = 0
 
@@ -67,7 +64,7 @@ def filter_non_field_experiments(studies: List[dict]) -> int:
         combined_text = f"{design} {facility}"
 
         # 检查试验描述中的盆栽关键词
-        is_pot = any(kw in combined_text for kw in pot_keywords)
+        is_pot = any(kw in combined_text for kw in POT_KEYWORDS)
 
         # 检查产量单位: g/株 通常表示单株计产
         is_single_plant = False
@@ -81,12 +78,18 @@ def filter_non_field_experiments(studies: List[dict]) -> int:
         # 检查测定方法
         methods = [v.get("measurement_method", "") or "" for v in varieties]
         method_text = " ".join(methods).lower()
-        is_pot_method = any(kw in method_text for kw in ["盆栽", "单株", "pot"])
+        is_pot_method = any(kw in method_text for kw in SINGLE_PLANT_KEYWORDS)
 
         if is_pot or (is_single_plant and is_pot_method):
-            title = study.get("study_title", "")[:40]
-            logger.info(f"  Filtered non-field: '{title}'")
-            removed_count += 1
+            # 如果有种植密度或小区面积，说明是大田单株取样，可以换算 → 保留
+            has_density = bool(study.get("planting_density"))
+            has_plot = bool(study.get("plot_size"))
+            if has_density or has_plot:
+                kept_studies.append(study)
+            else:
+                title = study.get("study_title", "")[:40]
+                logger.info(f"  Filtered non-field: '{title}'")
+                removed_count += 1
         else:
             kept_studies.append(study)
 

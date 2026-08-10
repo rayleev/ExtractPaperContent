@@ -384,15 +384,34 @@ def _match_area(s: str, area_to_ha: dict) -> Optional[float]:
 
 
 def _parse_plot_size_m2(s: str) -> Optional[float]:
-    """从自由文本中提取小区面积，统一为 m²。如 '13.3 m²' → 13.3, '0.002 ha' → 20.0"""
+    """从自由文本中提取小区面积，统一为 m²。
+
+    支持格式:
+      - 单值: '13.3 m²', '0.002 ha', '0.2 亩', '20 平米', '20m^2'
+      - 长×宽: '长 5m、宽 2.66m', '5m×2.66m', '5 x 2.66 米'
+    """
     if not s:
         return None
-    m = re.search(r'(\d+\.?\d*)\s*(m²|m2|平方米|ha|hm²|hm2|公顷|亩)', s)
+    s = s.strip()
+
+    # ── 尝试长×宽格式 ──
+    m = re.search(r'(?:长\s*)?(\d+\.?\d*)\s*(?:m|米)?\s*[×xX*，、]\s*(?:宽\s*)?(\d+\.?\d*)\s*(?:m|米)?', s)
+    if m:
+        length, width = float(m.group(1)), float(m.group(2))
+        if length > 0 and width > 0:
+            # 如果数值很大（如 30×12），可能是 cm 为单位的间距，不是长×宽
+            if length > 100 and width > 100:
+                pass  # 跳过，当作密度间距处理
+            else:
+                return round(length * width, 2)
+
+    # ── 尝试单值格式 ──
+    m = re.search(r'(\d+\.?\d*)\s*(m²|m2|m\^2|平方米|平米|ha|hm²|hm2|公顷|亩)', s)
     if not m:
         return None
     val = float(m.group(1))
     unit = m.group(2)
-    if unit in ("m²", "m2", "平方米"):
+    if unit in ("m²", "m2", "m^2", "平方米", "平米"):
         return val
     if unit in ("ha", "hm²", "hm2", "公顷"):
         return val * 10000
@@ -402,24 +421,43 @@ def _parse_plot_size_m2(s: str) -> Optional[float]:
 
 
 def _parse_density_per_ha(s: str) -> Optional[float]:
-    """
-    从自由文本中提取种植密度，统一为 穴(株)/ha。
+    """从自由文本中提取种植密度，统一为 穴(株)/ha。
 
-    支持两种格式:
-      1. 间距: '30×12 cm' → 10000/(0.30×0.12) ≈ 277778 穴/ha
-      2. 密度: '22.5万穴/公顷' → 225000, '30万株/hm²' → 300000, '15000株/亩' → 225000
+    支持格式:
+      - 间距: '30×12 cm', '30 x 12 cm', '30*12cm'
+      - 行距株距: '行距 30cm、株距 12cm', '株行距 30×12cm'
+      - 密度: '22.5万穴/公顷', '30万株/hm²', '15000株/亩', '基本苗 150 万株/公顷'
     """
     if not s:
         return None
-    # 1. 间距格式: 30×12 cm, 30x12cm, 30*12 厘米
-    m = re.search(r'(\d+\.?\d*)\s*[×xX*]\s*(\d+\.?\d*)\s*(cm|厘米|cm²)', s)
+    s = s.strip()
+
+    # ── 1. 行距株距格式（带中文前缀）──
+    m = re.search(r'行\s*距\s*(\d+\.?\d*)\s*(?:cm|厘米)?[、,，\s]*株\s*距\s*(\d+\.?\d*)\s*(?:cm|厘米)?', s)
+    if m:
+        row, plant = float(m.group(1)), float(m.group(2))
+        if row > 0 and plant > 0:
+            area_per_plant_m2 = (row / 100.0) * (plant / 100.0)
+            return round(10000.0 / area_per_plant_m2, 2)
+
+    # ── 2. 株行距/行距×株距格式（带前缀）──
+    m = re.search(r'(?:株\s*行\s*距|行\s*距\s*[×xX*]\s*株\s*距)\s*(\d+\.?\d*)\s*[×xX*]\s*(\d+\.?\d*)\s*(?:cm|厘米)?', s)
     if m:
         a, b = float(m.group(1)), float(m.group(2))
         if a > 0 and b > 0:
             area_per_plant_m2 = (a / 100.0) * (b / 100.0)
-            return 10000.0 / area_per_plant_m2
-    # 2. 密度格式: 22.5万穴/公顷, 225000株/ha, 15000棵/亩
-    m = re.search(r'(\d+\.?\d*)\s*(万)?\s*(穴|株|plant|hill|棵)\s*/?\s*(公顷|ha|hm²|hm2|亩)?', s, re.IGNORECASE)
+            return round(10000.0 / area_per_plant_m2, 2)
+
+    # ── 3. 纯间距格式: 30×12 cm, 30 x 12 cm, 30*12cm ──
+    m = re.search(r'(\d+\.?\d*)\s*[×xX*]\s*(\d+\.?\d*)\s*(cm|厘米|cm²)?', s)
+    if m:
+        a, b = float(m.group(1)), float(m.group(2))
+        if a > 0 and b > 0:
+            area_per_plant_m2 = (a / 100.0) * (b / 100.0)
+            return round(10000.0 / area_per_plant_m2, 2)
+
+    # ── 4. 密度格式: 22.5万穴/公顷, 15000株/亩, 基本苗 150 万株/公顷 ──
+    m = re.search(r'(\d+\.?\d*)\s*(万)?\s*(穴|株|plant|hill|棵|苗)\s*/?\s*(公顷|ha|hm²|hm2|亩)?', s, re.IGNORECASE)
     if m:
         val = float(m.group(1))
         if m.group(2):  # "万" 前缀
