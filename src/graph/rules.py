@@ -12,16 +12,16 @@ from src.core.models import _convert_yield
 
 logger = logging.getLogger("paper_extractor")
 
-# 不同作物的产量合理范围 (kg/ha)
+# 不同作物的产量合理范围 (kg/亩)
 YIELD_RANGES = {
-    "水稻": (500, 18000),
-    "玉米": (1000, 20000),
-    "小麦": (800, 15000),
-    "大豆": (300, 6000),
-    "油菜": (200, 5000),
+    "水稻": (33, 1200),
+    "玉米": (67, 1333),
+    "小麦": (53, 1000),
+    "大豆": (20, 400),
+    "油菜": (13, 333),
 }
-YIELD_MIN_DEFAULT = 500
-YIELD_MAX_DEFAULT = 18000
+YIELD_MIN_DEFAULT = 33
+YIELD_MAX_DEFAULT = 1200
 
 # 中国经纬度范围
 LAT_MIN, LAT_MAX = 18.0, 54.0
@@ -124,7 +124,7 @@ def validate_extraction(extraction: dict, paper_meta: dict, config=None, categor
                 expected = _convert_yield(
                     raw_val, raw_unit,
                     mass_to_kg=config.unit_conversion.mass_to_kg if config else {},
-                    area_to_ha=config.unit_conversion.area_to_ha if config else {},
+                    area_to_mu=config.unit_conversion.area_to_mu if config else {},
                     context_plot={"plot", "小区"},
                     context_plant={"plant", "株", "pot", "盆", "ear", "穗", "hill", "穴", "棵"},
                 )
@@ -144,11 +144,11 @@ def validate_extraction(extraction: dict, paper_meta: dict, config=None, categor
                         break
 
                 if std_val < yield_min or std_val > yield_max:
-                    warnings.append({"code": "YIELD_002", "message": f"{vprefix}: 产量异常 ({std_val} kg/ha, 合理范围 {yield_min}-{yield_max})"})
+                    warnings.append({"code": "YIELD_002", "message": f"{vprefix}: 产量异常 ({std_val} kg/亩, 合理范围 {yield_min}-{yield_max})"})
                     flagged.append((si, vi))
 
             # 3. pct_over_check 与对照品种计算一致性
-            # 基于换算后的标准产量（kg/ha）比较，规避单位写法差异（如 kg/ha vs kg·hm⁻²），
+            # 基于换算后的标准产量（kg/亩）比较，规避单位写法差异（如 kg/ha vs kg·hm⁻²），
             # 避免不同写法但语义等价的单位静默跳过校验。
             pct = v.get("pct_over_check")
             if pct is not None and std_val is not None and ck_varieties:
@@ -158,7 +158,7 @@ def validate_extraction(extraction: dict, paper_meta: dict, config=None, categor
                     ck_std = _convert_yield(
                         ck_yield, ck_unit,
                         mass_to_kg=config.unit_conversion.mass_to_kg if config else {},
-                        area_to_ha=config.unit_conversion.area_to_ha if config else {},
+                        area_to_mu=config.unit_conversion.area_to_mu if config else {},
                         context_plot={"plot", "小区"},
                         context_plant={"plant", "株", "pot", "盆", "ear", "穗", "hill", "穴", "棵"},
                     )

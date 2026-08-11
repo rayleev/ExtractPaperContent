@@ -51,7 +51,7 @@ def filter_non_field_experiments(studies: List[dict]) -> int:
       2. yield_raw_unit 为 g/株（单株计产，通常非大田）
       3. measurement_method 含"盆栽"/"单株"等关键词
 
-    例外：如果有 planting_density 或 plot_size，说明是大田单株取样、可换算为 kg/ha，保留。
+    例外：如果有 planting_density 或 plot_size，说明是大田单株取样、可换算为 kg/亩，保留。
 
     返回剔除数量。
     """

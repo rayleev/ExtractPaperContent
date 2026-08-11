@@ -110,7 +110,7 @@ class ConcurrencyConfig:
 class UnitConversionConfig:
     """单位换算配置，可通过 config.yaml 扩展。"""
     mass_to_kg: dict = field(default_factory=dict)
-    area_to_ha: dict = field(default_factory=dict)
+    area_to_mu: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -318,7 +318,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
     uc = raw.get("unit_conversion", {})
     unit_conversion = UnitConversionConfig(
         mass_to_kg=uc.get("mass_to_kg", _get_default(UnitConversionConfig, "mass_to_kg")),
-        area_to_ha=uc.get("area_to_ha", _get_default(UnitConversionConfig, "area_to_ha")),
+        area_to_mu=uc.get("area_to_mu", _get_default(UnitConversionConfig, "area_to_mu")),
     )
 
     # ── 证据验证 ──

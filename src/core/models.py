@@ -64,8 +64,8 @@ class VarietyYield(BaseModel):
     variety_source: Optional[str] = Field(None, description="育种单位/来源")
     yield_raw_value: Optional[float] = Field(None, description="[REQUIRED] 论文中的原始产量数值，如 612.5。只提取数值，不做换算")
     yield_raw_unit: Optional[str] = Field(None, description="[REQUIRED] 原始产量单位，如 kg/亩、kg/ha、t/ha。只提取原文单位")
-    yield_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的kg/ha值，LLM不要填")
-    yield_standard_unit: str = Field("kg/ha", description="[PROGRAM] 标准单位，固定为kg/ha，LLM不要填")
+    yield_standard_value: Optional[float] = Field(None, description="[PROGRAM] 由程序换算的kg/亩值，LLM不要填")
+    yield_standard_unit: str = Field("kg/亩", description="[PROGRAM] 标准单位，固定为kg/亩，LLM不要填")
     yield_value_type: Optional[YieldValueType] = Field(None, description="[REQUIRED] 产量值的统计类型：<plot_mean|single_replicate|converted>")
     significance_group: Optional[str] = Field(None, description="显著性字母标记，如 a/b/ab")
     pct_over_check: Optional[float] = Field(None, description="相对对照品种的增产/减产百分比（如 8.3 表示增产8.3%）")
@@ -159,7 +159,7 @@ class StudyInfo(BaseModel):
     geo_source: Optional[str] = Field(None, description="[DO NOT FILL] 坐标来源，系统自动标注: paper/lookup/baidu/province_fallback")
     replication_number: Optional[int] = Field(None, description="田间试验重复次数")
     plot_size: Optional[str] = Field(None, description="小区面积，如 '13.3 m²'")
-    planting_density: Optional[str] = Field(None, description="种植密度，如 '22.5万穴/公顷'")
+    planting_density: Optional[str] = Field(None, description="种植密度，如 '1.5万穴/亩'")
     experimental_design_description: Optional[str] = Field(None, description="[REQUIRED] 试验设计的文字描述")
     experimental_design_type: Optional[ExperimentalDesignType] = Field(None, description="试验设计类型：<RCBD|Split-plot|CRD|Unknown>")
     growth_facility_description: Optional[str] = Field(None, description="试验环境描述，如 '大田环境'、'温室'")
@@ -298,7 +298,7 @@ class ExtractionResult(BaseModel):
         # 从 config 获取换算表，或使用默认值
         if config is not None:
             mass_to_kg = config.unit_conversion.mass_to_kg
-            area_to_ha = config.unit_conversion.area_to_ha
+            area_to_mu = config.unit_conversion.area_to_mu
         else:
             # 默认换算表（向后兼容）
             mass_to_kg = {
@@ -306,11 +306,11 @@ class ExtractionResult(BaseModel):
                 "mg": 1e-6, "Mg": 1000.0,
                 "斤": 0.5, "公斤": 1.0, "lb": 0.453592,
             }
-            area_to_ha = {
-                "m2": 0.0001, "平方米": 0.0001,
-                "ha": 1.0, "hm2": 1.0, "公顷": 1.0,
-                "亩": 1.0 / 15.0, "mu": 1.0 / 15.0, "667m2": 1.0 / 15.0,
-                "acre": 0.404686,
+            area_to_mu = {
+                "m2": 1.0/666.67, "平方米": 1.0/666.67,
+                "ha": 15.0, "hm2": 15.0, "公顷": 15.0,
+                "亩": 1.0, "mu": 1.0, "667m2": 1.0,
+                "acre": 0.404686 * 15,
             }
 
         context_plot = {"plot", "小区"}
@@ -321,11 +321,11 @@ class ExtractionResult(BaseModel):
                 if v.yield_raw_value is not None and v.yield_raw_unit:
                     v.yield_standard_value = _convert_yield(
                         v.yield_raw_value, v.yield_raw_unit,
-                        mass_to_kg, area_to_ha, context_plot, context_plant,
+                        mass_to_kg, area_to_mu, context_plot, context_plant,
                         plot_size=study.plot_size or "",
                         planting_density=study.planting_density or "",
                     )
-                    v.yield_standard_unit = "kg/ha"
+                    v.yield_standard_unit = "kg/亩"
 
     def compute_standard_nutrients(self, config=None):
         """后处理：根据 n/p/k_raw_value + n/p/k_raw_unit 程序化换算 n/p/k_standard_value。
@@ -338,18 +338,18 @@ class ExtractionResult(BaseModel):
         # 从 config 获取换算表，或使用默认值
         if config is not None:
             mass_to_kg = config.unit_conversion.mass_to_kg
-            area_to_ha = config.unit_conversion.area_to_ha
+            area_to_mu = config.unit_conversion.area_to_mu
         else:
             mass_to_kg = {
                 "g": 0.001, "kg": 1.0, "t": 1000.0, "ton": 1000.0, "tonne": 1000.0,
                 "mg": 1e-6, "Mg": 1000.0,
                 "斤": 0.5, "公斤": 1.0, "lb": 0.453592,
             }
-            area_to_ha = {
-                "m2": 0.0001, "平方米": 0.0001,
-                "ha": 1.0, "hm2": 1.0, "公顷": 1.0,
-                "亩": 1.0 / 15.0, "mu": 1.0 / 15.0, "667m2": 1.0 / 15.0,
-                "acre": 0.404686,
+            area_to_mu = {
+                "m2": 1.0/666.67, "平方米": 1.0/666.67,
+                "ha": 15.0, "hm2": 15.0, "公顷": 15.0,
+                "亩": 1.0, "mu": 1.0, "667m2": 1.0,
+                "acre": 0.404686 * 15,
             }
 
         context_plot = {"plot", "小区"}
@@ -359,38 +359,38 @@ class ExtractionResult(BaseModel):
             for v in study.varieties:
                 # 氮 N
                 if v.n_raw_value is not None and v.n_raw_unit:
-                    kg_per_ha = _convert_yield(
+                    kg_per_mu = _convert_yield(
                         v.n_raw_value, v.n_raw_unit,
-                        mass_to_kg, area_to_ha, context_plot, context_plant,
+                        mass_to_kg, area_to_mu, context_plot, context_plant,
                         plot_size=study.plot_size or "",
                         planting_density=study.planting_density or "",
                     )
-                    if kg_per_ha is not None:
-                        v.n_standard_value = round(kg_per_ha / 15.0, 2)
+                    if kg_per_mu is not None:
+                        v.n_standard_value = kg_per_mu
                         v.n_standard_unit = "kg/亩"
 
                 # 磷 P
                 if v.p_raw_value is not None and v.p_raw_unit:
-                    kg_per_ha = _convert_yield(
+                    kg_per_mu = _convert_yield(
                         v.p_raw_value, v.p_raw_unit,
-                        mass_to_kg, area_to_ha, context_plot, context_plant,
+                        mass_to_kg, area_to_mu, context_plot, context_plant,
                         plot_size=study.plot_size or "",
                         planting_density=study.planting_density or "",
                     )
-                    if kg_per_ha is not None:
-                        v.p_standard_value = round(kg_per_ha / 15.0, 2)
+                    if kg_per_mu is not None:
+                        v.p_standard_value = kg_per_mu
                         v.p_standard_unit = "kg/亩"
 
                 # 钾 K
                 if v.k_raw_value is not None and v.k_raw_unit:
-                    kg_per_ha = _convert_yield(
+                    kg_per_mu = _convert_yield(
                         v.k_raw_value, v.k_raw_unit,
-                        mass_to_kg, area_to_ha, context_plot, context_plant,
+                        mass_to_kg, area_to_mu, context_plot, context_plant,
                         plot_size=study.plot_size or "",
                         planting_density=study.planting_density or "",
                     )
-                    if kg_per_ha is not None:
-                        v.k_standard_value = round(kg_per_ha / 15.0, 2)
+                    if kg_per_mu is not None:
+                        v.k_standard_value = kg_per_mu
                         v.k_standard_unit = "kg/亩"
 
 
@@ -441,12 +441,12 @@ def _match_mass(s: str, mass_to_kg: dict) -> Optional[float]:
     return None
 
 
-def _match_area(s: str, area_to_ha: dict) -> Optional[float]:
-    """匹配面积单位，返回 → ha 的换算系数。"""
-    if s in area_to_ha:
-        return area_to_ha[s]
+def _match_area(s: str, area_to_mu: dict) -> Optional[float]:
+    """匹配面积单位，返回 → 亩 的换算系数。"""
+    if s in area_to_mu:
+        return area_to_mu[s]
     sl = s.lower()
-    for k, v in area_to_ha.items():
+    for k, v in area_to_mu.items():
         if k.lower() == sl:
             return v
     return None
@@ -489,8 +489,8 @@ def _parse_plot_size_m2(s: str) -> Optional[float]:
     return None
 
 
-def _parse_density_per_ha(s: str) -> Optional[float]:
-    """从自由文本中提取种植密度，统一为 穴(株)/ha。
+def _parse_density_per_mu(s: str) -> Optional[float]:
+    """从自由文本中提取种植密度，统一为 穴(株)/亩。
 
     支持格式:
       - 间距: '30×12 cm', '30 x 12 cm', '30*12cm'
@@ -507,7 +507,7 @@ def _parse_density_per_ha(s: str) -> Optional[float]:
         row, plant = float(m.group(1)), float(m.group(2))
         if row > 0 and plant > 0:
             area_per_plant_m2 = (row / 100.0) * (plant / 100.0)
-            return round(10000.0 / area_per_plant_m2, 2)
+            return round(666.67 / area_per_plant_m2, 2)
 
     # ── 2. 株行距/行距×株距格式（带前缀）──
     m = re.search(r'(?:株\s*行\s*距|行\s*距\s*[×xX*]\s*株\s*距)\s*(\d+\.?\d*)\s*[×xX*]\s*(\d+\.?\d*)\s*(?:cm|厘米)?', s)
@@ -515,7 +515,7 @@ def _parse_density_per_ha(s: str) -> Optional[float]:
         a, b = float(m.group(1)), float(m.group(2))
         if a > 0 and b > 0:
             area_per_plant_m2 = (a / 100.0) * (b / 100.0)
-            return round(10000.0 / area_per_plant_m2, 2)
+            return round(666.67 / area_per_plant_m2, 2)
 
     # ── 3. 纯间距格式: 30×12 cm, 30 x 12 cm, 30*12cm ──
     m = re.search(r'(\d+\.?\d*)\s*[×xX*]\s*(\d+\.?\d*)\s*(cm|厘米|cm²)?', s)
@@ -523,7 +523,7 @@ def _parse_density_per_ha(s: str) -> Optional[float]:
         a, b = float(m.group(1)), float(m.group(2))
         if a > 0 and b > 0:
             area_per_plant_m2 = (a / 100.0) * (b / 100.0)
-            return round(10000.0 / area_per_plant_m2, 2)
+            return round(666.67 / area_per_plant_m2, 2)
 
     # ── 4. 密度格式: 22.5万穴/公顷, 15000株/亩, 基本苗 150 万株/公顷 ──
     m = re.search(r'(\d+\.?\d*)\s*(万)?\s*(穴|株|plant|hill|棵|苗)\s*/?\s*(公顷|ha|hm²|hm2|亩)?', s, re.IGNORECASE)
@@ -533,9 +533,9 @@ def _parse_density_per_ha(s: str) -> Optional[float]:
             val *= 10000
         area_unit = m.group(4) or "公顷"  # 默认按公顷
         if area_unit in ("公顷", "ha", "hm²", "hm2"):
-            return val
+            return round(val / 15.0, 2)  # 穴/ha → 穴/亩
         if area_unit == "亩":
-            return val * 15  # 穴/亩 → 穴/ha
+            return val  # 已经是穴/亩
     return None
 
 
@@ -543,20 +543,20 @@ def _convert_yield(
     value: float,
     unit: str,
     mass_to_kg: dict,
-    area_to_ha: dict,
+    area_to_mu: dict,
     context_plot: set,
     context_plant: set,
     plot_size: str = "",
     planting_density: str = "",
 ) -> Optional[float]:
     """
-    将产量值换算为 kg/ha（组合式解析）。
+    将产量值换算为 kg/亩（组合式解析）。
 
     三层策略:
       1. 组合式解析: 拆 mass/area，各自查系数 → value × mass_factor / area_factor
          覆盖: kg/ha, t/ha, g/m², Mg·ha⁻¹, kg/亩, 斤/亩, kg/667m² 等所有标准组合
       2. 上下文辅助: per-plot/per-plant 单位 + plot_size/planting_density → 换算
-         覆盖: kg/plot + plot_size="13.3 m²", g/株 + planting_density="22.5万穴/公顷"
+         覆盖: kg/plot + plot_size="13.3 m²", g/株 + planting_density="1.5万穴/亩"
       3. 不可转换: 返回 None（保留 raw 值，后续可标记）
     """
     u = _normalize_unit(unit)
@@ -573,7 +573,7 @@ def _convert_yield(
         return None
 
     # ── 第 1 层: 标准面积单位 → 直接换算 ──
-    area_factor = _match_area(area_str, area_to_ha)
+    area_factor = _match_area(area_str, area_to_mu)
     if area_factor is not None:
         return round(value * mass_factor / area_factor, 2)
 
@@ -584,14 +584,14 @@ def _convert_yield(
     if area_lower in context_plot:
         plot_m2 = _parse_plot_size_m2(plot_size)
         if plot_m2 and plot_m2 > 0:
-            # value [mass/plot] × mass_factor [kg/mass] × (10000 m²/ha / plot_m2) [plot/ha]
-            return round(value * mass_factor * (10000.0 / plot_m2), 2)
+            # value [mass/plot] × mass_factor [kg/mass] × (666.67 m²/亩 / plot_m2) [plot/亩]
+            return round(value * mass_factor * (666.67 / plot_m2), 2)
 
     # g/株, kg/plant, g/pot → 需要 planting_density
     if area_lower in context_plant:
-        density = _parse_density_per_ha(planting_density)
+        density = _parse_density_per_mu(planting_density)
         if density and density > 0:
-            # value [mass/plant] × mass_factor [kg/mass] × density [plant/ha]
+            # value [mass/plant] × mass_factor [kg/mass] × density [plant/亩]
             return round(value * mass_factor * density, 2)
 
     # ── 第 3 层: 不可转换 ──

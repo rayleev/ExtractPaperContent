@@ -3,7 +3,7 @@
 
 规则验证（validate_node）：纯代码检查，不消耗 token。
   - 产量换算一致性
-  - 产量范围检查（500-18000 kg/ha）
+  - 产量范围检查（33-1200 kg/亩）
   - 增产率计算校验
   - 对照品种存在性
   - trial_year ≤ publication_year
