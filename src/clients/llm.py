@@ -116,11 +116,18 @@ class LLMClient:
                 )
                 return content
             except requests.exceptions.Timeout as e:
-                # 超时直接失败，不再重试（避免卡住）
+                # 超时重试 1 次
                 elapsed = time.time() - t0
+                if attempt < 2:
+                    logger.warning(
+                        f"  LLM TIMEOUT ({elapsed:.1f}s, prompt={prompt_chars} chars): {e} — "
+                        f"retrying (attempt {attempt} → {attempt + 1})"
+                    )
+                    time.sleep(min(3 * (2 ** attempt), 60))
+                    continue
                 logger.error(
                     f"  LLM TIMEOUT ({elapsed:.1f}s, prompt={prompt_chars} chars): {e} — "
-                    f"aborting retries to avoid hanging"
+                    f"aborting after 1 retry"
                 )
                 return None
             except Exception as e:
