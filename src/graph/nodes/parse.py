@@ -439,6 +439,21 @@ def _check_parse_quality(
     }
 
 
+def extract_title_from_first_page(md_text: str, llm: LLMClient, pid: str = "") -> Optional[dict]:
+    """从论文第一页内容中提取标题（LLM）。"""
+    try:
+        first_page_text = md_text[:2000]
+        prompt_template = (PROMPT_DIR / "extract_title.txt").read_text(encoding="utf-8")
+        prompt = prompt_template.replace("{first_page_text}", first_page_text)
+        result = llm.call_json(prompt, max_tokens=500, node_name="extract_title")
+        if not result or not isinstance(result, dict):
+            return None
+        return result
+    except Exception as e:
+        logger.warning(f"  [{pid[:25]}] Title extraction error: {type(e).__name__}: {e}")
+        return None
+
+
 def parse_node(
     state: PaperState,
     config: AppConfig,
@@ -506,6 +521,16 @@ def parse_node(
             "status": "failed",
         }
 
+    # ── 提取 PDF 第一页标题 ──
+    original_title = paper_meta.get("title", "")
+    pdf_title = ""
+    if llm:
+        title_result = extract_title_from_first_page(md_text, llm, pid)
+        if title_result:
+            pdf_title = title_result.get("title", "") or ""
+            pdf_title_en = title_result.get("title_en", "") or ""
+            logger.info(f"  [{pid[:25]}] PDF title extracted: '{pdf_title[:60]}...'")
+
     # ── 构建文档树 + 收集各部分文本 ──
     tree = build_document_tree(md_text)
     outline = get_section_outline(tree, max_level=3)
@@ -550,6 +575,14 @@ def parse_node(
             logger.warning(f"  [{pid[:25]}] LLM understanding failed")
     else:
         logger.warning(f"  [{pid[:25]}] LLM client not available, skipping understanding")
+
+    # ── 将标题信息存入 doc_context（供 postprocess 覆盖标题用）──
+    if pdf_title:
+        doc_context["pdf_title"] = pdf_title
+        if pdf_title_en:
+            doc_context["pdf_title_en"] = pdf_title_en
+        if original_title:
+            doc_context["ss_original_title"] = original_title
 
     # ── 质量门控 ──
     parse_quality = _check_parse_quality(doc_context, extraction_hints, pid)

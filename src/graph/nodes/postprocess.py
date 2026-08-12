@@ -93,6 +93,15 @@ def postprocess_node(state: PaperState, config: AppConfig) -> dict:
     paper_info = phase1.get("paper", {})
     phase1_studies = phase1.get("studies", [])
 
+    # ── 标题覆盖：用 PDF 提取标题替换 SS API 原始标题 ──
+    doc_context = state.get("doc_context", {})
+    pdf_title = doc_context.get("pdf_title", "")
+    if pdf_title:
+        ss_title = doc_context.get("ss_original_title", paper_info.get("title", ""))
+        if pdf_title != ss_title:
+            logger.info(f"  [{pid[:25]}] Title override: '{ss_title[:50]}...' -> '{pdf_title[:50]}...'")
+        paper_info["title"] = pdf_title
+
     # ── 合并 Phase 1（study 级字段）+ Phase 2（varieties）──
     # Phase 1 输出 study 级字段（study_title, trial_year, site 等）
     # Phase 2 输出 varieties 列表（品种级字段）
