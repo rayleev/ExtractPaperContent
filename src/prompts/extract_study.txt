@@ -10,18 +10,23 @@
 1. **只提取论文中明确存在的数据**，绝不编造或推测
 2. **注意同义表述**：论文中的表述可能与字段名不同但含义一致
    - "小区面积"="plot_size"，"重复次数"="replication_number"
-   - "播种期"/"播种日期"="sowing_date"，"收获期"/"收获日期"="harvest_date"
+   - "播种期"/"播种日期"/"播种"="sowing_date"
+   - "移栽期"/"移栽日期"/"移栽"="transplanting_date"（水稻等移栽作物）
+   - "抽穗期"/"始穗期"/"抽穗"="heading_date"
+   - "齐穗期"/"齐穗"="full_heading_date"
+   - "成熟期"/"成熟日期"/"生理成熟"="maturity_date"
+   - "收获期"/"收获日期"/"收获"="harvest_date"
    - "试验地"/"试验地点"="experimental_site_name"
    - "对照"/"CK"/"check"=is_check_variety=true
    - "增产率"/"增幅"/"比CK增产"=pct_over_check
    - "显著性标记"/"Duncan检验字母"/"多重比较字母"=significance_group
-3. **模糊日期处理规则**（适用于 sowing_date 和 harvest_date）：
+3. **模糊日期处理规则**（适用于所有日期字段）：
    - 如果论文写"5月27日播种"→ sowing_date="2022-05-27"（年份从 trial_year 取）
    - 如果论文写"10月收获"→ harvest_date="2022-10"（只精确到月）
    - 如果论文写"10月15日收获"→ harvest_date="2022-10-15"
    - 如果论文写"9月下旬至10月上旬收获"→ harvest_date="2022-09"（取起始月）
    - 如果论文写"全生育期 120 天"且有 sowing_date→ harvest_date 从 sowing_date + 120 天推算
-   - 如果论文没有写收获日期→ harvest_date 填 null
+   - 如果论文没有写某个日期→ 该字段填 null
 4. **产量只提取原始值和单位，不要换算**
    - 只提取 yield_raw_value（原始数值）和 yield_raw_unit（原始单位）
    - 不要填写 yield_standard_value 和 yield_standard_unit，这两个字段由程序自动换算

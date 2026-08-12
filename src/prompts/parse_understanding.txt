@@ -156,6 +156,12 @@
 6. **planting_density**（种植密度）— 管理类论文核心因子
 7. **fertilizer_N / fertilizer_P / fertilizer_K**（施肥量）— 管理类论文核心因子
 8. **treatment_name**（处理名称）— 每个处理的描述
+9. **sowing_date**（播种日期）— 如"5月27日播种"
+10. **transplanting_date**（移栽日期）— 水稻等移栽作物
+11. **heading_date**（抽穗期/始穗期）— 如"7月15日抽穗"
+12. **full_heading_date**（齐穗期）— 如"7月20日齐穗"
+13. **maturity_date**（成熟期/生理成熟期）— 如"9月10日成熟"
+14. **harvest_date**（收获日期）— 如"10月8日收获"
 
 其他字段按论文中明确写出的提取。
 

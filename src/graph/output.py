@@ -185,12 +185,13 @@ def insert_extraction(conn, result: dict, paper_id: str):
             cur.execute("""
                 INSERT INTO pe_core_studies
                 (paper_id, study_index, study_title, study_description, trial_year,
-                 sowing_date, harvest_date, country, site_administrative_region,
+                 sowing_date, transplanting_date, heading_date, full_heading_date,
+                 maturity_date, harvest_date, country, site_administrative_region,
                  experimental_site_name, latitude, longitude, altitude, geo_source,
                  replication_number, plot_size, planting_density,
                  experimental_design_description, experimental_design_type,
                  growth_facility_description, cultural_practices, notes)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (paper_id, study_index) DO UPDATE SET
                     study_title = EXCLUDED.study_title, trial_year = EXCLUDED.trial_year,
                     site_administrative_region = EXCLUDED.site_administrative_region,
@@ -199,7 +200,10 @@ def insert_extraction(conn, result: dict, paper_id: str):
             """, (
                 paper_id, study_idx,
                 study.get("study_title"), study.get("study_description"),
-                study.get("trial_year"), study.get("sowing_date"), study.get("harvest_date"),
+                study.get("trial_year"),
+                study.get("sowing_date"), study.get("transplanting_date"),
+                study.get("heading_date"), study.get("full_heading_date"),
+                study.get("maturity_date"), study.get("harvest_date"),
                 study.get("country"), study.get("site_administrative_region"),
                 study.get("experimental_site_name"),
                 study.get("latitude"), study.get("longitude"), study.get("altitude"),
@@ -273,7 +277,9 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     (paper_id, study_index, variety_index,
                      doi, paper_title, publication_year, journal_name, crop_species,
                      category,
-                     study_title, trial_year, sowing_date, harvest_date, country,
+                     study_title, trial_year, sowing_date, transplanting_date,
+                     heading_date, full_heading_date, maturity_date, harvest_date,
+                     country,
                      site_administrative_region, experimental_site_name,
                      latitude, longitude, altitude, geo_source,
                      replication_number, plot_size, planting_density,
@@ -288,7 +294,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                      k_raw_value, k_raw_unit, nutrient_source_location,
                      n_standard_value, p_standard_value, k_standard_value,
                      extracted_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (paper_id, study_index, variety_index, treatment_name) DO UPDATE SET
                         variety_name = EXCLUDED.variety_name,
                         yield_standard_value = EXCLUDED.yield_standard_value,
@@ -304,7 +310,9 @@ def insert_extraction(conn, result: dict, paper_id: str):
                     meta.get("journal") or paper.get("journal_name"),
                     paper.get("crop_species"), cls.get("category"),
                     study.get("study_title"), study.get("trial_year"),
-                    study.get("sowing_date"), study.get("harvest_date"),
+                    study.get("sowing_date"), study.get("transplanting_date"),
+                    study.get("heading_date"), study.get("full_heading_date"),
+                    study.get("maturity_date"), study.get("harvest_date"),
                     study.get("country"), study.get("site_administrative_region"),
                     study.get("experimental_site_name"),
                     study.get("latitude"), study.get("longitude"), study.get("altitude"),
