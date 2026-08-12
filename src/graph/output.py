@@ -191,7 +191,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                  replication_number, plot_size, planting_density,
                  experimental_design_description, experimental_design_type,
                  growth_facility_description, cultural_practices, notes)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 ON CONFLICT (paper_id, study_index) DO UPDATE SET
                     study_title = EXCLUDED.study_title, trial_year = EXCLUDED.trial_year,
                     site_administrative_region = EXCLUDED.site_administrative_region,
@@ -294,7 +294,7 @@ def insert_extraction(conn, result: dict, paper_id: str):
                      k_raw_value, k_raw_unit, nutrient_source_location,
                      n_standard_value, p_standard_value, k_standard_value,
                      extracted_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                     ON CONFLICT (paper_id, study_index, variety_index, treatment_name) DO UPDATE SET
                         variety_name = EXCLUDED.variety_name,
                         yield_standard_value = EXCLUDED.yield_standard_value,
